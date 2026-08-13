@@ -1,0 +1,50 @@
+{
+  "name": "example",
+  "short_flag": "x",
+  "items": [
+    {
+      "id": "docs",
+      "title": "Docs",
+      "subtitle": "Open documentation folder",
+      "info": {
+        "summary": "Documentation launcher and quick references.",
+        "fields": [
+          {
+            "label": "Provider",
+            "value": "example"
+          },
+          {
+            "label": "Command",
+            "value": "xdg-open ~/Documents"
+          }
+        ]
+      },
+      "action": {
+        "type": "shell_command",
+        "value": "xdg-open ~/Documents"
+      }
+    },
+    {
+      "id": "backup-status",
+      "title": "Backup Status",
+      "subtitle": "Check backup progress",
+      "info": {
+        "summary": "Show the latest backup status and quick diagnostics.",
+        "fields": [
+          {
+            "label": "Provider",
+            "value": "example"
+          },
+          {
+            "label": "Command",
+            "value": "echo Checking backup status"
+          }
+        ]
+      },
+      "action": {
+        "type": "shell_command",
+        "value": "echo Checking backup status"
+      }
+    }
+  ]
+}
