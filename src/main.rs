@@ -21,18 +21,74 @@ use providers::{load_all_items, load_all_items_from_args};
 
 fn main() -> Result<()> {
     let args: Vec<String> = std::env::args().skip(1).collect();
+    if args.iter().any(|arg| arg == "-h" || arg == "--help") {
+        print_help();
+        return Ok(());
+    }
+
     let load_report = if args.is_empty() {
         load_all_items()
     } else {
         load_all_items_from_args(&args)
     };
+    let unknown_flag_warning = load_report
+        .rejected
+        .iter()
+        .find(|entry| entry.contains("no providers matched requested flags"))
+        .cloned();
 
     let mut terminal = setup_terminal()?;
     let mut app = AppState::new(load_report.items, load_report.rejected.len());
+    if let Some(warning) = unknown_flag_warning {
+        app.set_status(format!("Warning: {}", warning));
+    }
 
     let run_result = run_app(&mut terminal, &mut app);
     restore_terminal(&mut terminal)?;
     run_result
+}
+
+fn print_help() {
+    println!("Tuisual");
+    println!("Terminal launcher with provider-based item discovery.");
+    println!();
+    println!("Usage:");
+    println!("  tuisual                Show provider catalog");
+    println!("  tuisual [flags]        Load items from matching providers");
+    println!("  tuisual -h, --help     Show this help page");
+    println!();
+    println!("Examples:");
+    println!("  tuisual -p");
+    println!("  tuisual --path-launcher");
+    println!();
+    println!("Discovered providers:");
+
+    let report = load_all_items();
+    let mut rows: Vec<(String, String)> = report
+        .items
+        .into_iter()
+        .filter(|item| item.provider == "catalog")
+        .map(|item| {
+            let short_flag = item
+                .info
+                .fields
+                .iter()
+                .find(|field| field.label == "Short Flag")
+                .map(|field| field.value.clone())
+                .unwrap_or_else(|| "(none)".to_string());
+            (item.title, short_flag)
+        })
+        .collect();
+
+    rows.sort_by(|a, b| a.0.cmp(&b.0));
+
+    if rows.is_empty() {
+        println!("  (no providers discovered)");
+    } else {
+        for (name, short_flag) in rows {
+            println!("  --{:<22} {}", name, short_flag);
+        }
+    }
 }
 
 fn setup_terminal() -> Result<Terminal<CrosstermBackend<io::Stdout>>> {

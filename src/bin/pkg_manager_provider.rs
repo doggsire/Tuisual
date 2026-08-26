@@ -98,37 +98,6 @@ fn shell_quote(value: &str) -> String {
     format!("'{}'", value.replace('\'', "'\\''"))
 }
 
-fn install_aur_item() -> ProviderItem {
-    ProviderItem {
-        id: "pkg-aur-install".to_string(),
-        title: "Install package (AUR via paru)".to_string(),
-        subtitle: "Search or install a package from the AUR".to_string(),
-        info: ItemInfo {
-            summary: "Install a package from the AUR by typing a package name. This is a manual fallback when an AUR package cannot be enumerated from the local metadata.".to_string(),
-            fields: vec![
-                InfoField { label: "Source".to_string(), value: "AUR / paru".to_string() },
-                InfoField { label: "Command".to_string(), value: "paru -S --needed <package>".to_string() },
-            ],
-        },
-        action: Action {
-            action_type: "shell_command_exit".to_string(),
-            value: "paru -S --needed".to_string(),
-        },
-        require_sub_item: true,
-        sub_items: vec![ActionSubItem {
-            id: "enter-package".to_string(),
-            title: "Type package name".to_string(),
-            subtitle: "Install a package from the AUR using paru".to_string(),
-            flags: vec![],
-            exit_after: Some(true),
-            input: Some(SubItemInput {
-                flag_prefix: " ".to_string(),
-                prompt: "AUR package name".to_string(),
-            }),
-        }],
-    }
-}
-
 fn provider_query() -> Option<String> {
     env::var("TUISUAL_PROVIDER_QUERY")
         .ok()
@@ -418,11 +387,6 @@ fn build_available_items() -> Vec<ProviderItem> {
     let timing = timing_enabled();
     let query = provider_query();
 
-    // Startup fast-path: when no query is provided, avoid full catalog scans.
-    if query.is_none() {
-        return vec![install_aur_item()];
-    }
-
     let aur_started = Instant::now();
     let aur_names = installed_aur_names();
     if timing {
@@ -575,7 +539,36 @@ fn build_available_items() -> Vec<ProviderItem> {
 
     items.sort_by_key(|a| a.title.to_ascii_lowercase());
 
-    items.insert(0, install_aur_item());
+    let install_aur = ProviderItem {
+        id: "pkg-aur-install".to_string(),
+        title: "Install package (AUR via paru)".to_string(),
+        subtitle: "Search or install a package from the AUR".to_string(),
+        info: ItemInfo {
+            summary: "Install a package from the AUR by typing a package name. This is a manual fallback when an AUR package cannot be enumerated from the local metadata.".to_string(),
+            fields: vec![
+                InfoField { label: "Source".to_string(), value: "AUR / paru".to_string() },
+                InfoField { label: "Command".to_string(), value: "paru -S --needed <package>".to_string() },
+            ],
+        },
+        action: Action {
+            action_type: "shell_command_exit".to_string(),
+            value: "paru -S --needed".to_string(),
+        },
+        require_sub_item: true,
+        sub_items: vec![ActionSubItem {
+            id: "enter-package".to_string(),
+            title: "Type package name".to_string(),
+            subtitle: "Install a package from the AUR using paru".to_string(),
+            flags: vec![],
+            exit_after: Some(true),
+            input: Some(SubItemInput {
+                flag_prefix: " ".to_string(),
+                prompt: "AUR package name".to_string(),
+            }),
+        }],
+    };
+
+    items.insert(0, install_aur);
     items
 }
 

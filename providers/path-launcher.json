@@ -1,5 +1,5 @@
 {
-  "name": "path-commands",
+  "name": "path-launcher",
   "short_flag": "p",
   "command": "./target/debug/path_commands_provider"
 }
