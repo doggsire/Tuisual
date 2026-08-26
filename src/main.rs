@@ -125,10 +125,10 @@ fn handle_mouse_event(
             }
         }
         MouseEventKind::Down(MouseButton::Left) => {
-            if let Some(row) = layout.results_row_at(mouse.column, mouse.row) {
-                if let Some(index) = app.result_index_for_row(row, layout.results_viewport_height()) {
-                    app.click_result_index(index);
-                }
+            if let Some(row) = layout.results_row_at(mouse.column, mouse.row)
+                && let Some(index) = app.result_index_for_row(row, layout.results_viewport_height())
+            {
+                app.click_result_index(index);
             }
         }
         _ => {}

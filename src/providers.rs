@@ -28,6 +28,8 @@ struct ExternalProviderDoc {
     items: Vec<ProviderItem>,
     #[serde(default)]
     command: Option<String>,
+    #[serde(default)]
+    shell_command: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -55,11 +57,11 @@ impl ProviderFilter {
                 continue;
             }
 
-            if let Some(shorts) = arg.strip_prefix('-') {
-                if !shorts.is_empty() {
-                    for ch in shorts.chars() {
-                        filter.short_flags.insert(ch.to_ascii_lowercase());
-                    }
+            if let Some(shorts) = arg.strip_prefix('-')
+                && !shorts.is_empty()
+            {
+                for ch in shorts.chars() {
+                    filter.short_flags.insert(ch.to_ascii_lowercase());
                 }
             }
         }
@@ -162,8 +164,15 @@ fn append_external_doc(
     let provider_name = doc.name;
     let mut collected_items = doc.items;
 
-    if let Some(command) = doc.command {
-        match run_provider_command(&command) {
+    match (doc.command, doc.shell_command) {
+        (Some(_), Some(_)) => {
+            report.rejected.push(format!(
+                "source={} provider={} error=dynamic provider must define only one of 'command' or 'shell_command'",
+                source, provider_name
+            ));
+            return;
+        }
+        (Some(command), None) => match run_provider_binary_command(&command) {
             Ok(mut generated) => collected_items.append(&mut generated),
             Err(err) => {
                 report.rejected.push(format!(
@@ -171,7 +180,17 @@ fn append_external_doc(
                     source, provider_name, err
                 ));
             }
-        }
+        },
+        (None, Some(shell_command)) => match run_provider_shell_command(&shell_command) {
+            Ok(mut generated) => collected_items.append(&mut generated),
+            Err(err) => {
+                report.rejected.push(format!(
+                    "source={} provider={} error=dynamic shell command failed: {}",
+                    source, provider_name, err
+                ));
+            }
+        },
+        (None, None) => {}
     }
 
     if collected_items.is_empty() {
@@ -255,18 +274,30 @@ fn ensure_provider_binary_exists(command: &str) -> Result<String, String> {
     }
 }
 
-fn run_provider_command(command: &str) -> Result<Vec<ProviderItem>, String> {
-    let shell = env::var("SHELL").unwrap_or_else(|_| "sh".to_string());
+fn run_provider_binary_command(command: &str) -> Result<Vec<ProviderItem>, String> {
     let resolved = ensure_provider_binary_exists(command)?;
+    run_provider_shell_and_parse(&resolved, "command", "provider command")
+}
+
+fn run_provider_shell_command(command: &str) -> Result<Vec<ProviderItem>, String> {
+    run_provider_shell_and_parse(command, "shell command", "provider shell command")
+}
+
+fn run_provider_shell_and_parse(
+    command: &str,
+    error_context: &str,
+    output_context: &str,
+) -> Result<Vec<ProviderItem>, String> {
+    let shell = env::var("SHELL").unwrap_or_else(|_| "sh".to_string());
     let output = Command::new(&shell)
         .arg("-lc")
-        .arg(format!("cd {} && {}", env!("CARGO_MANIFEST_DIR"), resolved))
+        .arg(format!("cd {} && {}", env!("CARGO_MANIFEST_DIR"), command))
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .env("TUISUAL_PROVIDER_MODE", "1")
         .output()
-        .map_err(|err| format!("failed to run command: {}", err))?;
+        .map_err(|err| format!("failed to run {}: {}", error_context, err))?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
@@ -278,10 +309,10 @@ fn run_provider_command(command: &str) -> Result<Vec<ProviderItem>, String> {
     }
 
     let stdout = String::from_utf8(output.stdout)
-        .map_err(|err| format!("provider command output was not utf-8: {}", err))?;
+        .map_err(|err| format!("{} output was not utf-8: {}", output_context, err))?;
 
     let items: Vec<ProviderItem> = serde_json::from_str(&stdout)
-        .map_err(|err| format!("provider command output json parse error: {}", err))?;
+        .map_err(|err| format!("{} output json parse error: {}", output_context, err))?;
 
     Ok(items)
 }
@@ -618,6 +649,7 @@ mod tests {
                 sub_items: vec![],
             }],
             command: None,
+            shell_command: None,
         };
 
         append_external_doc(&mut report, "external.json", &ProviderFilter::default(), doc);
@@ -662,6 +694,7 @@ mod tests {
             short_flag: Some("xy".to_string()),
             items: vec![],
             command: None,
+            shell_command: None,
         };
 
         append_external_doc(&mut report, "example.json", &ProviderFilter::default(), doc);
@@ -729,7 +762,8 @@ mod tests {
             name: "dynamic".to_string(),
             short_flag: Some("y".to_string()),
             items: vec![],
-            command: Some(
+            command: None,
+            shell_command: Some(
                 "printf '%s' '[{".to_string()
                     + "\"id\":\"dyn-1\","
                     + "\"title\":\"Dyn 1\","
@@ -751,7 +785,7 @@ mod tests {
         // SAFETY: single-threaded test context
         unsafe { std::env::set_var("TUISUAL_PROVIDER_MODE", "1"); }
 
-        let result = super::run_provider_command("./target/debug/path_commands_provider");
+        let result = super::run_provider_binary_command("./target/debug/path_commands_provider");
 
         if let Some(old) = previous {
             unsafe { std::env::set_var("TUISUAL_PROVIDER_MODE", old); }
@@ -771,6 +805,7 @@ mod tests {
             short_flag: None,
             items: vec![],
             command: None,
+            shell_command: None,
         };
 
         append_external_doc(&mut report, "empty.json", &ProviderFilter::default(), doc);
@@ -787,6 +822,24 @@ mod tests {
             report.items.iter().any(|item| item.provider == "path-commands"),
             "-p should include PATH command items"
         );
+    }
+
+    #[test]
+    fn dynamic_provider_rejects_ambiguous_command_fields() {
+        let mut report = ProviderLoadReport::default();
+        let doc = ExternalProviderDoc {
+            name: "ambiguous".to_string(),
+            short_flag: None,
+            items: vec![],
+            command: Some("./target/debug/path_commands_provider".to_string()),
+            shell_command: Some("printf '[]'".to_string()),
+        };
+
+        append_external_doc(&mut report, "ambiguous.json", &ProviderFilter::default(), doc);
+
+        assert!(report.items.is_empty());
+        assert_eq!(report.rejected.len(), 1);
+        assert!(report.rejected[0].contains("only one of 'command' or 'shell_command'"));
     }
 
 }

@@ -361,7 +361,7 @@ fn extract_flags_with_descriptions_from_man_text(content: &str) -> Vec<(String, 
             let (flag_section, inline_description) = split_option_line(trimmed);
             let mut current_flags = Vec::new();
 
-            for token in flag_section.split(|ch| ch == ',' || ch == '|') {
+            for token in flag_section.split([',', '|']) {
                 let Some(flag) = normalize_flag_token(token) else {
                     continue;
                 };
@@ -397,10 +397,10 @@ fn extract_flags_with_descriptions_from_man_text(content: &str) -> Vec<(String, 
         {
             let description = trimmed.to_string();
             for flag in pending_flags.drain(..) {
-                if let Some(index) = index_by_flag.get(&flag).copied() {
-                    if results[index].1.is_none() {
-                        results[index].1 = Some(description.clone());
-                    }
+                if let Some(index) = index_by_flag.get(&flag).copied()
+                    && results[index].1.is_none()
+                {
+                    results[index].1 = Some(description.clone());
                 }
             }
         } else {

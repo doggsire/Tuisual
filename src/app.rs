@@ -1,4 +1,5 @@
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use std::env;
 use std::time::{Duration, Instant};
 
 use crate::matcher::{RankedItem, rank_items};
@@ -36,6 +37,12 @@ struct LastClickState {
     at: Instant,
 }
 
+#[derive(Debug)]
+struct PendingPkgLookup {
+    query: String,
+    due_at: Instant,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PaneFocus {
     Results,
@@ -58,6 +65,8 @@ pub struct AppState {
     compose_state: Option<ComposeState>,
     view_stack: Vec<ViewState>,
     last_click: Option<LastClickState>,
+    pending_pkg_lookup: Option<PendingPkgLookup>,
+    last_pkg_lookup_query: Option<String>,
 }
 
 impl AppState {
@@ -91,6 +100,8 @@ impl AppState {
             compose_state: None,
             view_stack: Vec::new(),
             last_click: None,
+            pending_pkg_lookup: None,
+            last_pkg_lookup_query: None,
         }
     }
 
@@ -176,7 +187,12 @@ impl AppState {
                     self.select_next();
                 }
             }
-            KeyCode::Enter => self.launch_selected(),
+            KeyCode::Enter => {
+                if self.try_force_pkg_lookup() {
+                    return;
+                }
+                self.launch_selected();
+            }
             KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                 self.input.clear();
                 self.cursor = 0;
@@ -229,7 +245,7 @@ impl AppState {
     }
 
     pub fn poll_action_results(&mut self) {
-        // Kept for loop compatibility; shell commands are now run in the main loop.
+        self.process_debounced_pkg_lookup();
     }
 
     pub fn take_pending_shell_command(&mut self) -> Option<PendingShellCommand> {
@@ -443,11 +459,12 @@ impl AppState {
     }
 
     fn recompute_rankings(&mut self) {
-        if self.input.is_empty() && self.items.iter().all(|item| item.provider == "pkg-manager") {
+        if self.input.is_empty() && self.is_pkg_manager_only() {
             self.ranked.clear();
             self.selected = 0;
             self.info_scroll = 0;
             self.last_click = None;
+            self.pending_pkg_lookup = None;
             self.status = "Type a package name to search".to_string();
             return;
         }
@@ -462,6 +479,111 @@ impl AppState {
         } else {
             self.status = format!("{} matches", self.ranked.len());
         }
+
+        self.schedule_pkg_lookup();
+    }
+
+    fn is_pkg_manager_only(&self) -> bool {
+        !self.items.is_empty() && self.items.iter().all(|item| item.provider == "pkg-manager")
+    }
+
+    fn pkg_lookup_debounce(query: &str) -> Duration {
+        if query.chars().count() <= 3 {
+            Duration::from_millis(180)
+        } else {
+            Duration::from_millis(120)
+        }
+    }
+
+    fn schedule_pkg_lookup(&mut self) {
+        if !self.is_pkg_manager_only() {
+            self.pending_pkg_lookup = None;
+            return;
+        }
+
+        let query = self.input.trim();
+        if query.chars().count() < 2 {
+            self.pending_pkg_lookup = None;
+            return;
+        }
+
+        if self.last_pkg_lookup_query.as_deref() == Some(query) {
+            return;
+        }
+
+        self.pending_pkg_lookup = Some(PendingPkgLookup {
+            query: query.to_string(),
+            due_at: Instant::now() + Self::pkg_lookup_debounce(query),
+        });
+    }
+
+    fn process_debounced_pkg_lookup(&mut self) {
+        let should_run = self
+            .pending_pkg_lookup
+            .as_ref()
+            .is_some_and(|pending| Instant::now() >= pending.due_at);
+
+        if !should_run {
+            return;
+        }
+
+        let Some(pending) = self.pending_pkg_lookup.take() else {
+            return;
+        };
+
+        if self.input.trim() != pending.query {
+            return;
+        }
+
+        if self.last_pkg_lookup_query.as_deref() == Some(pending.query.as_str()) {
+            return;
+        }
+
+        self.lookup_pkg_manager_query(&pending.query);
+    }
+
+    fn try_force_pkg_lookup(&mut self) -> bool {
+        if !self.is_pkg_manager_only() {
+            return false;
+        }
+
+        let query = self.input.trim().to_string();
+        if query.chars().count() < 2 {
+            return false;
+        }
+
+        if self.last_pkg_lookup_query.as_deref() == Some(query.as_str()) {
+            return false;
+        }
+
+        self.pending_pkg_lookup = None;
+        self.lookup_pkg_manager_query(&query);
+        true
+    }
+
+    fn lookup_pkg_manager_query(&mut self, query: &str) {
+        let args = vec!["--pkg-manager".to_string()];
+        let previous = env::var_os("TUISUAL_PROVIDER_QUERY");
+
+        unsafe {
+            env::set_var("TUISUAL_PROVIDER_QUERY", query);
+        }
+
+        let load_report = load_all_items_from_args(&args);
+
+        match previous {
+            Some(value) => unsafe {
+                env::set_var("TUISUAL_PROVIDER_QUERY", value);
+            },
+            None => unsafe {
+                env::remove_var("TUISUAL_PROVIDER_QUERY");
+            },
+        }
+
+        self.items = load_report.items;
+        self.rejected_items = load_report.rejected.len();
+        self.last_pkg_lookup_query = Some(query.to_string());
+        self.recompute_rankings();
     }
 
     fn launch_selected(&mut self) {
@@ -691,6 +813,8 @@ impl AppState {
 
         self.items = load_report.items;
         self.rejected_items = load_report.rejected.len();
+        self.pending_pkg_lookup = None;
+        self.last_pkg_lookup_query = None;
         self.recompute_rankings();
 
         if self.items.is_empty() {

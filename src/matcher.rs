@@ -73,10 +73,10 @@ fn score_candidate(query: &str, candidate: &str) -> Option<i64> {
                 score += 60;
             }
 
-            if let Some(prev) = last_match {
-                if idx == prev + 1 {
-                    score += 50;
-                }
+            if let Some(prev) = last_match
+                && idx == prev + 1
+            {
+                score += 50;
             }
 
             if idx > 0 {

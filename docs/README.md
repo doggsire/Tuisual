@@ -49,15 +49,31 @@ Defined in `providers/*.json`. Items are embedded directly in the file.
 }
 ```
 
-### Dynamic providers (JSON + binary)
+### Dynamic providers (JSON + command)
 
-The JSON file points to a helper binary. Tuisual runs the binary, captures its stdout, and parses the JSON it emits.
+Dynamic providers can generate items in two explicit ways:
+- `command`: an executable/binary path (recommended for Rust helper binaries)
+- `shell_command`: an inline shell snippet that prints JSON to stdout
+
+Use only one of these fields in a single provider file.
+
+Binary command example:
 
 ```json
 {
   "name": "desktop-dynamic",
   "short_flag": "a",
   "command": "./target/debug/desktop_apps_provider"
+}
+```
+
+Shell command example:
+
+```json
+{
+  "name": "quick-dynamic",
+  "short_flag": "q",
+  "shell_command": "printf '%s' '[{\"id\":\"quick\",\"title\":\"Quick\",\"subtitle\":\"Generated\",\"info\":{\"summary\":\"S\",\"fields\":[]},\"action\":{\"type\":\"shell_command\",\"value\":\"echo quick\"}}]'"
 }
 ```
 

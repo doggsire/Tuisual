@@ -176,10 +176,10 @@ fn validate_sub_item(sub_item: &ActionSubItem) -> Result<(), String> {
             return Err("sub_items.flags entries must not be empty".to_string());
         }
     }
-    if let Some(input) = &sub_item.input {
-        if input.prompt.trim().is_empty() {
-            return Err("sub_items.input.prompt must not be empty".to_string());
-        }
+    if let Some(input) = &sub_item.input
+        && input.prompt.trim().is_empty()
+    {
+        return Err("sub_items.input.prompt must not be empty".to_string());
     }
     if sub_item.require_sub_item && sub_item.sub_items.is_empty() {
         return Err("sub_items.require_sub_item=true requires nested sub_items".to_string());
