@@ -4,7 +4,42 @@ use serde::{Deserialize, Serialize};
 #[serde(tag = "type", content = "value", rename_all = "snake_case")]
 pub enum ItemAction {
     ShellCommand(String),
+    ShellCommandExit(String),
+    ShellCommandWithFlag(ShellCommandWithFlag),
     ProviderHint(String),
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct ShellCommandWithFlag {
+    pub command: String,
+    pub flag_prefix: String,
+    pub prompt: String,
+    #[serde(default)]
+    pub exit_after: bool,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct ActionSubItem {
+    pub id: String,
+    pub title: String,
+    #[serde(default)]
+    pub subtitle: String,
+    #[serde(default)]
+    pub flags: Vec<String>,
+    #[serde(default)]
+    pub exit_after: Option<bool>,
+    #[serde(default)]
+    pub require_sub_item: bool,
+    #[serde(default)]
+    pub input: Option<SubItemInput>,
+    #[serde(default)]
+    pub sub_items: Vec<ActionSubItem>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct SubItemInput {
+    pub flag_prefix: String,
+    pub prompt: String,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -26,6 +61,10 @@ pub struct ProviderItem {
     pub subtitle: String,
     pub info: ItemInfo,
     pub action: ItemAction,
+    #[serde(default)]
+    pub require_sub_item: bool,
+    #[serde(default)]
+    pub sub_items: Vec<ActionSubItem>,
 }
 
 #[derive(Debug, Clone)]
@@ -36,6 +75,8 @@ pub struct AppItem {
     pub subtitle: String,
     pub info: ItemInfo,
     pub action: ItemAction,
+    pub require_sub_item: bool,
+    pub sub_items: Vec<ActionSubItem>,
 }
 
 impl ProviderItem {
@@ -61,10 +102,34 @@ impl ProviderItem {
             }
         }
 
+        for sub_item in &self.sub_items {
+            validate_sub_item(sub_item)?;
+        }
+
+        if self.require_sub_item && self.sub_items.is_empty() {
+            return Err("require_sub_item=true requires at least one sub_item".to_string());
+        }
+
         match &self.action {
             ItemAction::ShellCommand(command) => {
                 if command.trim().is_empty() {
                     return Err("shell command must not be empty".to_string());
+                }
+            }
+            ItemAction::ShellCommandExit(command) => {
+                if command.trim().is_empty() {
+                    return Err("shell command exit must not be empty".to_string());
+                }
+            }
+            ItemAction::ShellCommandWithFlag(config) => {
+                if config.command.trim().is_empty() {
+                    return Err("shell command with flag command must not be empty".to_string());
+                }
+                if config.flag_prefix.trim().is_empty() {
+                    return Err("shell command with flag prefix must not be empty".to_string());
+                }
+                if config.prompt.trim().is_empty() {
+                    return Err("shell command with flag prompt must not be empty".to_string());
                 }
             }
             ItemAction::ProviderHint(message) => {
@@ -93,13 +158,43 @@ impl AppItem {
             subtitle: item.subtitle,
             info: item.info,
             action: item.action,
+            require_sub_item: item.require_sub_item,
+            sub_items: item.sub_items,
         })
     }
 }
 
+fn validate_sub_item(sub_item: &ActionSubItem) -> Result<(), String> {
+    if sub_item.id.trim().is_empty() {
+        return Err("sub_items.id must not be empty".to_string());
+    }
+    if sub_item.title.trim().is_empty() {
+        return Err("sub_items.title must not be empty".to_string());
+    }
+    for flag in &sub_item.flags {
+        if flag.trim().is_empty() {
+            return Err("sub_items.flags entries must not be empty".to_string());
+        }
+    }
+    if let Some(input) = &sub_item.input {
+        if input.prompt.trim().is_empty() {
+            return Err("sub_items.input.prompt must not be empty".to_string());
+        }
+    }
+    if sub_item.require_sub_item && sub_item.sub_items.is_empty() {
+        return Err("sub_items.require_sub_item=true requires nested sub_items".to_string());
+    }
+    for nested in &sub_item.sub_items {
+        validate_sub_item(nested)?;
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{AppItem, InfoField, ItemAction, ItemInfo, ProviderItem};
+    use super::{
+        ActionSubItem, AppItem, InfoField, ItemAction, ItemInfo, ProviderItem, SubItemInput,
+    };
 
     #[test]
     fn provider_item_validation_rejects_empty_title() {
@@ -115,6 +210,8 @@ mod tests {
                 }],
             },
             action: ItemAction::ShellCommand("echo hi".to_string()),
+            require_sub_item: false,
+            sub_items: vec![],
         };
 
         assert!(item.validate().is_err());
@@ -134,6 +231,41 @@ mod tests {
                 }],
             },
             action: ItemAction::ShellCommand("echo hi".to_string()),
+            require_sub_item: false,
+            sub_items: vec![],
+        };
+
+        assert!(AppItem::from_provider_item("mock", item).is_ok());
+    }
+
+    #[test]
+    fn app_item_accepts_sub_item_input_with_empty_flag_prefix() {
+        let item = ProviderItem {
+            id: "test-id".to_string(),
+            title: "Title".to_string(),
+            subtitle: "x".to_string(),
+            info: ItemInfo {
+                summary: "Summary".to_string(),
+                fields: vec![InfoField {
+                    label: "A".to_string(),
+                    value: "B".to_string(),
+                }],
+            },
+            action: ItemAction::ShellCommandExit("echo hi".to_string()),
+            require_sub_item: false,
+            sub_items: vec![ActionSubItem {
+                id: "custom-args".to_string(),
+                title: "Custom Args".to_string(),
+                subtitle: "Type anything".to_string(),
+                flags: vec![],
+                exit_after: Some(true),
+                require_sub_item: false,
+                input: Some(SubItemInput {
+                    flag_prefix: "".to_string(),
+                    prompt: "Enter flags/args".to_string(),
+                }),
+                sub_items: vec![],
+            }],
         };
 
         assert!(AppItem::from_provider_item("mock", item).is_ok());

@@ -1,0 +1,94 @@
+{
+  "name": "arch-updates",
+  "short_flag": "u",
+  "items": [
+    {
+      "id": "arch-update-all",
+      "title": "Update All (paru + flatpak)",
+      "subtitle": "Run full Arch and Flatpak updates using: paru -Syu --noconfirm && flatpak update -y",
+      "info": {
+        "summary": "Performs a full system upgrade and Flatpak update. Exact command: paru -Syu --noconfirm && flatpak update -y",
+        "fields": [
+          {
+            "label": "Provider",
+            "value": "arch-updates"
+          },
+          {
+            "label": "Command",
+            "value": "paru -Syu --noconfirm && flatpak update -y"
+          }
+        ]
+      },
+      "action": {
+        "type": "shell_command_exit",
+        "value": "paru -Syu --noconfirm && flatpak update -y"
+      }
+    },
+    {
+      "id": "arch-update-pacman",
+      "title": "Update pacman Packages",
+      "subtitle": "Update official repo packages with: sudo pacman -Syu --noconfirm",
+      "info": {
+        "summary": "Upgrades packages managed by pacman. Exact command: sudo pacman -Syu --noconfirm",
+        "fields": [
+          {
+            "label": "Provider",
+            "value": "arch-updates"
+          },
+          {
+            "label": "Command",
+            "value": "sudo pacman -Syu --noconfirm"
+          }
+        ]
+      },
+      "action": {
+        "type": "shell_command_exit",
+        "value": "sudo pacman -Syu --noconfirm"
+      }
+    },
+    {
+      "id": "arch-update-paru",
+      "title": "Update paru (AUR)",
+      "subtitle": "Update AUR packages with: paru -Syua --noconfirm",
+      "info": {
+        "summary": "Upgrades AUR packages through paru. Exact command: paru -Syua --noconfirm",
+        "fields": [
+          {
+            "label": "Provider",
+            "value": "arch-updates"
+          },
+          {
+            "label": "Command",
+            "value": "paru -Syua --noconfirm"
+          }
+        ]
+      },
+      "action": {
+        "type": "shell_command_exit",
+        "value": "paru -Syua --noconfirm"
+      }
+    },
+    {
+      "id": "arch-update-flatpak",
+      "title": "Update Flatpak",
+      "subtitle": "Update Flatpak apps and runtimes with: flatpak update -y",
+      "info": {
+        "summary": "Updates Flatpak runtimes and applications. Exact command: flatpak update -y",
+        "fields": [
+          {
+            "label": "Provider",
+            "value": "arch-updates"
+          },
+          {
+            "label": "Command",
+            "value": "flatpak update -y"
+          }
+        ]
+      },
+      "action": {
+        "type": "shell_command_exit",
+        "value": "flatpak update -y"
+      }
+    }
+  ]
+}

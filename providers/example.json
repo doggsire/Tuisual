@@ -45,6 +45,90 @@
         "type": "shell_command",
         "value": "echo Checking backup status"
       }
+    },
+    {
+      "id": "fastfetch",
+      "title": "Fastfetch",
+      "subtitle": "Quickly fetch system information",
+      "info": {
+        "summary": "Quickly fetch system information using fastfetch.",
+        "fields": [
+          {
+            "label": "Provider",
+            "value": "example"
+          },
+          {
+            "label": "Command",
+            "value": "fastfetch"
+          }
+        ]
+      },
+      "action": {
+        "type": "shell_command_exit",
+        "value": "fastfetch"
+      }
+    },
+    {
+      "id": "wappify",
+      "title": "Wappify (Choose Provider)",
+      "subtitle": "Launch Wappify directly or choose provider steps",
+      "info": {
+        "summary": "Launch Wappify directly, or open sub-items for step-by-step flags.",
+        "fields": [
+          {
+            "label": "Provider",
+            "value": "example"
+          },
+          {
+            "label": "Base Command",
+            "value": "wappify"
+          }
+        ]
+      },
+      "action": {
+        "type": "shell_command_exit",
+        "value": "wappify"
+      },
+      "require_sub_item": true,
+      "sub_items": [
+        {
+          "id": "Name",
+          "title": "Webapp Name (Input)",
+          "subtitle": "Type webapp name, then Space for URL step",
+          "flags": [],
+          "input": {
+            "flag_prefix": "name=",
+            "prompt": "Enter the webapp name"
+          },
+          "require_sub_item": true,
+          "sub_items": [
+            {
+              "id": "URL",
+              "title": "Webapp URL (Input)",
+              "subtitle": "Type only URL value; url= is added automatically",
+              "flags": [],
+              "input": {
+                "flag_prefix": "url=",
+                "prompt": "Enter the webapp URL"
+              },
+              "require_sub_item": false,
+              "sub_items": [
+                {
+                  "id": "Icon",
+                  "title": "Webapp Icon (Input)",
+                  "subtitle": "Type only icon value; icon= is added automatically",
+                  "flags": [],
+                  "input": {
+                    "flag_prefix": "icon=",
+                    "prompt": "Enter the webapp icon"
+                  },
+                  "exit_after": true
+                }
+              ]
+            }
+          ]
+        }
+      ]
     }
   ]
 }

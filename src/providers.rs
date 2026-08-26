@@ -1,8 +1,10 @@
 use crate::models::{AppItem, InfoField, ItemAction, ItemInfo, ProviderItem};
 use serde::Deserialize;
 use std::collections::HashSet;
+use std::env;
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
 
 pub trait Provider {
     fn name(&self) -> &'static str;
@@ -22,7 +24,10 @@ pub struct ProviderLoadReport {
 struct ExternalProviderDoc {
     name: String,
     short_flag: Option<String>,
+    #[serde(default)]
     items: Vec<ProviderItem>,
+    #[serde(default)]
+    command: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -155,7 +160,29 @@ fn append_external_doc(
     }
 
     let provider_name = doc.name;
-    for raw in doc.items {
+    let mut collected_items = doc.items;
+
+    if let Some(command) = doc.command {
+        match run_provider_command(&command) {
+            Ok(mut generated) => collected_items.append(&mut generated),
+            Err(err) => {
+                report.rejected.push(format!(
+                    "source={} provider={} error=dynamic command failed: {}",
+                    source, provider_name, err
+                ));
+            }
+        }
+    }
+
+    if collected_items.is_empty() {
+        report.rejected.push(format!(
+            "source={} provider={} error=no items produced",
+            source, provider_name
+        ));
+        return;
+    }
+
+    for raw in collected_items {
         let item_id = raw.id.clone();
         match AppItem::from_provider_item(&provider_name, raw) {
             Ok(item) => report.items.push(item),
@@ -165,6 +192,98 @@ fn append_external_doc(
             )),
         }
     }
+}
+
+fn resolve_provider_command(command: &str) -> String {
+    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let trimmed = command.trim();
+
+    if trimmed.is_empty() {
+        return trimmed.to_string();
+    }
+
+    let candidate = Path::new(trimmed);
+    if candidate.is_absolute() || trimmed.starts_with("~") || trimmed.starts_with("$") {
+        return trimmed.to_string();
+    }
+
+    let project_relative = manifest_dir.join(trimmed);
+    if project_relative.exists() {
+        return project_relative.display().to_string();
+    }
+
+    trimmed.to_string()
+}
+
+fn ensure_provider_binary_exists(command: &str) -> Result<String, String> {
+    let resolved = resolve_provider_command(command);
+    if Path::new(&resolved).exists() {
+        return Ok(resolved);
+    }
+
+    let binary_name = Path::new(&resolved)
+        .file_name()
+        .and_then(|value| value.to_str())
+        .filter(|value| !value.trim().is_empty())
+        .ok_or_else(|| format!("provider command has no executable target: {}", command))?;
+
+    let status = Command::new("cargo")
+        .arg("build")
+        .arg("--bin")
+        .arg(binary_name)
+        .arg("--quiet")
+        .current_dir(env!("CARGO_MANIFEST_DIR"))
+        .status()
+        .map_err(|err| format!("failed to build provider binary {}: {}", binary_name, err))?;
+
+    if !status.success() {
+        return Err(format!(
+            "provider binary '{}' could not be built for command '{}', exit status {:?}",
+            binary_name,
+            command,
+            status.code()
+        ));
+    }
+
+    if Path::new(&resolved).exists() {
+        Ok(resolved)
+    } else {
+        Err(format!(
+            "provider binary '{}' was not created for command '{}'",
+            binary_name, command
+        ))
+    }
+}
+
+fn run_provider_command(command: &str) -> Result<Vec<ProviderItem>, String> {
+    let shell = env::var("SHELL").unwrap_or_else(|_| "sh".to_string());
+    let resolved = ensure_provider_binary_exists(command)?;
+    let output = Command::new(&shell)
+        .arg("-lc")
+        .arg(format!("cd {} && {}", env!("CARGO_MANIFEST_DIR"), resolved))
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .env("TUISUAL_PROVIDER_MODE", "1")
+        .output()
+        .map_err(|err| format!("failed to run command: {}", err))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!(
+            "exit status {:?}: {}",
+            output.status.code(),
+            stderr.trim()
+        ));
+    }
+
+    let stdout = String::from_utf8(output.stdout)
+        .map_err(|err| format!("provider command output was not utf-8: {}", err))?;
+
+    let items: Vec<ProviderItem> = serde_json::from_str(&stdout)
+        .map_err(|err| format!("provider command output json parse error: {}", err))?;
+
+    Ok(items)
 }
 
 fn load_external_provider_items(dir: &Path, filter: &ProviderFilter) -> ProviderLoadReport {
@@ -269,7 +388,11 @@ pub fn load_all_items() -> ProviderLoadReport {
 
 pub fn load_all_items_from_args(args: &[String]) -> ProviderLoadReport {
     let filter = ProviderFilter::from_args(args);
-    let built_in = load_provider_items_filtered(&default_providers(), &filter);
+    let built_in = if filter.is_active() {
+        load_provider_items_filtered(&default_providers(), &filter)
+    } else {
+        load_provider_items(&default_providers())
+    };
     let providers_dir = std::env::var("TUISUAL_PROVIDERS_DIR")
         .ok()
         .filter(|value| !value.trim().is_empty())
@@ -364,14 +487,6 @@ fn load_external_provider_descriptors(dir: &Path) -> (Vec<ProviderDescriptor>, V
 }
 
 fn provider_catalog_item(descriptor: &ProviderDescriptor) -> AppItem {
-    let launch_hint = match descriptor.short_flag {
-        Some(short) => format!(
-            "Launch provider with --{} or -{}",
-            descriptor.name, short
-        ),
-        None => format!("Launch provider with --{}", descriptor.name),
-    };
-
     AppItem {
         provider: "catalog".to_string(),
         id: format!("provider:{}", descriptor.name),
@@ -397,7 +512,9 @@ fn provider_catalog_item(descriptor: &ProviderDescriptor) -> AppItem {
                 },
             ],
         },
-        action: ItemAction::ProviderHint(launch_hint),
+        action: ItemAction::ProviderHint(descriptor.name.clone()),
+        require_sub_item: false,
+        sub_items: vec![],
     }
 }
 
@@ -409,7 +526,8 @@ pub fn default_providers() -> Vec<Box<dyn Provider>> {
 mod tests {
     use super::{
         ExternalProviderDoc, Provider, ProviderFilter, ProviderLoadReport, append_external_doc,
-        load_all_items, load_provider_items, merge_reports, parse_external_provider_doc,
+        load_all_items, load_all_items_from_args, load_provider_items, merge_reports,
+        parse_external_provider_doc,
     };
     use crate::models::{InfoField, ItemAction, ItemInfo, ProviderItem};
 
@@ -433,6 +551,8 @@ mod tests {
                     }],
                 },
                 action: ItemAction::ShellCommand("echo broken".to_string()),
+                require_sub_item: false,
+                sub_items: vec![],
             }]
         }
     }
@@ -494,7 +614,10 @@ mod tests {
                     }],
                 },
                 action: ItemAction::ShellCommand("echo bad".to_string()),
+                require_sub_item: false,
+                sub_items: vec![],
             }],
+            command: None,
         };
 
         append_external_doc(&mut report, "external.json", &ProviderFilter::default(), doc);
@@ -538,6 +661,7 @@ mod tests {
             name: "example".to_string(),
             short_flag: Some("xy".to_string()),
             items: vec![],
+            command: None,
         };
 
         append_external_doc(&mut report, "example.json", &ProviderFilter::default(), doc);
@@ -555,4 +679,114 @@ mod tests {
                 .all(|item| item.provider == "catalog" && item.id.starts_with("provider:"))
         );
     }
+
+    #[test]
+    fn provider_item_sub_items_stay_attached_to_parent() {
+        struct SubItemProvider;
+
+        impl Provider for SubItemProvider {
+            fn name(&self) -> &'static str {
+                "sub"
+            }
+
+            fn list_items(&self) -> Vec<ProviderItem> {
+                vec![ProviderItem {
+                    id: "base".to_string(),
+                    title: "Base".to_string(),
+                    subtitle: "Launch base".to_string(),
+                    info: ItemInfo {
+                        summary: "Base launcher".to_string(),
+                        fields: vec![],
+                    },
+                    action: ItemAction::ShellCommand("demo".to_string()),
+                    require_sub_item: false,
+                    sub_items: vec![crate::models::ActionSubItem {
+                        id: "with-flag".to_string(),
+                        title: "With Flag".to_string(),
+                        subtitle: "Launch with extra flag".to_string(),
+                        flags: vec!["--example".to_string()],
+                        exit_after: None,
+                        require_sub_item: false,
+                        input: None,
+                        sub_items: vec![],
+                    }],
+                }]
+            }
+        }
+
+        let providers: Vec<Box<dyn Provider>> = vec![Box::new(SubItemProvider)];
+        let report = load_provider_items(&providers);
+
+        assert_eq!(report.items.len(), 1);
+        assert_eq!(report.items[0].id, "base");
+        assert_eq!(report.items[0].sub_items.len(), 1);
+    }
+
+    #[test]
+    fn dynamic_provider_command_generates_items() {
+        let mut report = ProviderLoadReport::default();
+        let doc = ExternalProviderDoc {
+            name: "dynamic".to_string(),
+            short_flag: Some("y".to_string()),
+            items: vec![],
+            command: Some(
+                "printf '%s' '[{".to_string()
+                    + "\"id\":\"dyn-1\","
+                    + "\"title\":\"Dyn 1\","
+                    + "\"subtitle\":\"Generated\","
+                    + "\"info\":{\"summary\":\"S\",\"fields\":[{\"label\":\"L\",\"value\":\"V\"}]},"
+                    + "\"action\":{\"type\":\"shell_command\",\"value\":\"echo dyn\"}"
+                    + "}]'"
+            ),
+        };
+
+        append_external_doc(&mut report, "dynamic.json", &ProviderFilter::default(), doc);
+        assert_eq!(report.items.len(), 1);
+        assert_eq!(report.items[0].provider, "dynamic");
+    }
+
+    #[test]
+    fn path_provider_helper_emits_items_when_invoked_by_tuisual() {
+        let previous = std::env::var_os("TUISUAL_PROVIDER_MODE");
+        // SAFETY: single-threaded test context
+        unsafe { std::env::set_var("TUISUAL_PROVIDER_MODE", "1"); }
+
+        let result = super::run_provider_command("./target/debug/path_commands_provider");
+
+        if let Some(old) = previous {
+            unsafe { std::env::set_var("TUISUAL_PROVIDER_MODE", old); }
+        } else {
+            unsafe { std::env::remove_var("TUISUAL_PROVIDER_MODE"); }
+        }
+
+        let items = result.expect("PATH provider should emit JSON items");
+        assert!(!items.is_empty(), "PATH provider emitted no items");
+    }
+
+    #[test]
+    fn dynamic_provider_requires_items_or_command_output() {
+        let mut report = ProviderLoadReport::default();
+        let doc = ExternalProviderDoc {
+            name: "empty".to_string(),
+            short_flag: None,
+            items: vec![],
+            command: None,
+        };
+
+        append_external_doc(&mut report, "empty.json", &ProviderFilter::default(), doc);
+        assert_eq!(report.items.len(), 0);
+        assert_eq!(report.rejected.len(), 1);
+    }
+
+    #[test]
+    fn short_flag_p_loads_path_provider_items() {
+        let report = load_all_items_from_args(&["-p".to_string()]);
+
+        assert!(!report.items.is_empty(), "-p should load provider items");
+        assert!(
+            report.items.iter().any(|item| item.provider == "path-commands"),
+            "-p should include PATH command items"
+        );
+    }
+
 }

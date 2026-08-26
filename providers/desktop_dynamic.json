@@ -1,0 +1,5 @@
+{
+  "name": "desktop-dynamic",
+  "short_flag": "a",
+  "command": "./target/debug/desktop_apps_provider"
+}

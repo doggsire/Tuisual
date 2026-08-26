@@ -1,0 +1,46 @@
+{
+  "commands": [
+    {
+      "command": "ls",
+      "flags": [
+        { "flag": "--all", "title": "All (--all)", "subtitle": "Do not ignore entries starting with ." },
+        { "flag": "--almost-all", "title": "Almost All (--almost-all)", "subtitle": "Exclude . and .." },
+        { "flag": "--color", "title": "Color (--color)", "subtitle": "Enable colorized output" },
+        { "flag": "--long", "title": "Long Listing (--long)", "subtitle": "Use long listing format" }
+      ]
+    },
+    {
+      "command": "grep",
+      "flags": [
+        { "flag": "--ignore-case", "title": "Ignore Case (--ignore-case)", "subtitle": "Case-insensitive matching" },
+        { "flag": "--line-number", "title": "Line Number (--line-number)", "subtitle": "Print line numbers" },
+        { "flag": "--recursive", "title": "Recursive (--recursive)", "subtitle": "Read all files under each directory recursively" },
+        { "flag": "--word-regexp", "title": "Word Match (--word-regexp)", "subtitle": "Match whole words only" }
+      ]
+    },
+    {
+      "command": "git",
+      "flags": [
+        { "flag": "--no-pager", "title": "No Pager (--no-pager)", "subtitle": "Disable pager for this invocation" },
+        { "flag": "--version", "title": "Version (--version)", "subtitle": "Show git version" },
+        { "flag": "--help", "title": "Help (--help)", "subtitle": "Show help information" }
+      ]
+    },
+    {
+      "command": "cargo",
+      "flags": [
+        { "flag": "--offline", "title": "Offline (--offline)", "subtitle": "Run without accessing the network" },
+        { "flag": "--locked", "title": "Locked (--locked)", "subtitle": "Require Cargo.lock to be up to date" },
+        { "flag": "--frozen", "title": "Frozen (--frozen)", "subtitle": "Equivalent to --locked and --offline" }
+      ]
+    },
+    {
+      "command": "rg",
+      "flags": [
+        { "flag": "--hidden", "title": "Hidden (--hidden)", "subtitle": "Search hidden files and directories" },
+        { "flag": "--glob", "title": "Glob (--glob)", "subtitle": "Include or exclude files by glob" },
+        { "flag": "--multiline", "title": "Multiline (--multiline)", "subtitle": "Enable matching across multiple lines" }
+      ]
+    }
+  ]
+}

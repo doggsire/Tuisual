@@ -17,7 +17,7 @@ pub fn rank_items(query: &str, items: &[AppItem]) -> Vec<RankedItem> {
 
     let mut ranked = Vec::new();
     for (index, item) in items.iter().enumerate() {
-        if let Some(score) = score_candidate(query, &item.title) {
+        if let Some(score) = score_item(query, item) {
             ranked.push(RankedItem { index, score });
         }
     }
@@ -29,6 +29,17 @@ pub fn rank_items(query: &str, items: &[AppItem]) -> Vec<RankedItem> {
     });
 
     ranked
+}
+
+fn score_item(query: &str, item: &AppItem) -> Option<i64> {
+    let title_score = score_candidate(query, &item.title).map(|score| score + 600);
+    let subtitle_score = score_candidate(query, &item.subtitle);
+    let id_score = score_candidate(query, &item.id).map(|score| score - 120);
+
+    [title_score, subtitle_score, id_score]
+        .into_iter()
+        .flatten()
+        .max()
 }
 
 fn score_candidate(query: &str, candidate: &str) -> Option<i64> {
@@ -108,6 +119,8 @@ mod tests {
                 }],
             },
             action: ItemAction::ShellCommand(command.to_string()),
+            require_sub_item: false,
+            sub_items: vec![],
         };
 
         AppItem::from_provider_item("matcher-test", provider_item).expect("valid test item")
@@ -122,5 +135,28 @@ mod tests {
 
         let ranked = rank_items("alp", &items);
         assert_eq!(ranked[0].index, 0);
+    }
+
+    #[test]
+    fn subtitle_terms_are_searchable() {
+        let item = ProviderItem {
+            id: "files".to_string(),
+            title: "Files".to_string(),
+            subtitle: "File manager | terms: nautilus browser".to_string(),
+            info: ItemInfo {
+                summary: "test summary".to_string(),
+                fields: vec![InfoField {
+                    label: "k".to_string(),
+                    value: "v".to_string(),
+                }],
+            },
+            action: ItemAction::ShellCommand("echo files".to_string()),
+            require_sub_item: false,
+            sub_items: vec![],
+        };
+
+        let app_item = AppItem::from_provider_item("matcher-test", item).expect("valid item");
+        let ranked = rank_items("nautilus", &[app_item]);
+        assert_eq!(ranked.len(), 1);
     }
 }
