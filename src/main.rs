@@ -15,12 +15,44 @@ use crossterm::terminal::{disable_raw_mode, enable_raw_mode};
 use crossterm::{cursor, execute, style, terminal};
 use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
+use serde::Serialize;
 
 use app::AppState;
 use providers::{load_all_items, load_all_items_from_args};
 
+#[derive(Serialize)]
+struct JsonCatalog {
+    items: Vec<models::AppItem>,
+    rejected: Vec<String>,
+}
+
 fn main() -> Result<()> {
-    let args: Vec<String> = std::env::args().skip(1).collect();
+    let mut args: Vec<String> = std::env::args().skip(1).collect();
+    let json_mode = take_flag(&mut args, "--json");
+    let provider_query = take_option(&mut args, "--query");
+
+    if let Some(query) = provider_query {
+        unsafe {
+            std::env::set_var("TUISUAL_PROVIDER_QUERY", query);
+        }
+    }
+
+    if json_mode {
+        let report = if args.is_empty() {
+            load_all_items()
+        } else {
+            load_all_items_from_args(&args)
+        };
+        println!(
+            "{}",
+            serde_json::to_string(&JsonCatalog {
+                items: report.items,
+                rejected: report.rejected,
+            })?
+        );
+        return Ok(());
+    }
+
     if args.iter().any(|arg| arg == "-h" || arg == "--help") {
         print_help();
         return Ok(());
@@ -46,6 +78,25 @@ fn main() -> Result<()> {
     let run_result = run_app(&mut terminal, &mut app);
     restore_terminal(&mut terminal)?;
     run_result
+}
+
+fn take_flag(args: &mut Vec<String>, flag: &str) -> bool {
+    if let Some(index) = args.iter().position(|arg| arg == flag) {
+        args.remove(index);
+        true
+    } else {
+        false
+    }
+}
+
+fn take_option(args: &mut Vec<String>, option: &str) -> Option<String> {
+    let index = args.iter().position(|arg| arg == option)?;
+    args.remove(index);
+    if index < args.len() {
+        Some(args.remove(index))
+    } else {
+        None
+    }
 }
 
 fn print_help() {
@@ -131,16 +182,17 @@ fn run_app(
         }
 
         if let Some(command) = app.take_pending_shell_command() {
-            let outcome = run_shell_command_in_foreground(terminal, &command.command)?;
+            let message = run_shell_command_in_foreground(
+                terminal,
+                &command.command,
+                !command.exit_after,
+            )?;
 
-            // Only exit immediately on success; on failure stay in the TUI so the
-            // error is visible instead of silently closing without launching anything.
-            if command.exit_after && outcome.success {
+            if command.exit_after {
                 return Ok(());
             }
 
-            show_command_result_and_wait(terminal)?;
-            app.set_status(outcome.message);
+            app.set_status(message);
         }
 
         if app.should_quit {
@@ -192,15 +244,11 @@ fn handle_mouse_event(
     Ok(())
 }
 
-struct ShellCommandOutcome {
-    message: String,
-    success: bool,
-}
-
 fn run_shell_command_in_foreground(
     terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
     command: &str,
-) -> Result<ShellCommandOutcome> {
+    return_to_tui: bool,
+) -> Result<String> {
     suspend_terminal(terminal)?;
 
     let shell = std::env::var("SHELL").unwrap_or_else(|_| "sh".to_string());
@@ -208,26 +256,21 @@ fn run_shell_command_in_foreground(
 
     normalize_terminal_after_foreground_command()?;
 
-    let (message, success) = match output {
-        Ok(status) if status.success() => ("Action completed".to_string(), true),
-        Ok(status) => (
-            format!("Action failed: exit {:?} (shell: {})", status.code(), shell),
-            false,
-        ),
-        Err(err) => (format!("Action failed to start: {}", err), false),
+    if return_to_tui {
+        println!("Press Enter to return to Tuisual...");
+        let mut input = String::new();
+        let _ = io::stdin().read_line(&mut input);
+
+        resume_terminal(terminal)?;
+    }
+
+    let message = match output {
+        Ok(status) if status.success() => "Action completed".to_string(),
+        Ok(status) => format!("Action failed: exit {:?} (shell: {})", status.code(), shell),
+        Err(err) => format!("Action failed to start: {}", err),
     };
 
-    Ok(ShellCommandOutcome { message, success })
-}
-
-fn show_command_result_and_wait(
-    terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
-) -> Result<()> {
-    println!("Press Enter to return to Tuisual...");
-    let mut input = String::new();
-    let _ = io::stdin().read_line(&mut input);
-
-    resume_terminal(terminal)
+    Ok(message)
 }
 
 fn normalize_terminal_after_foreground_command() -> Result<()> {
