@@ -61,7 +61,7 @@ impl ProviderFilter {
                 && !shorts.is_empty()
             {
                 for ch in shorts.chars() {
-                    filter.short_flags.insert(ch.to_ascii_lowercase());
+                    filter.short_flags.insert(ch);
                 }
             }
         }
@@ -83,7 +83,7 @@ impl ProviderFilter {
         }
 
         if let Some(short) = short_flag {
-            return self.short_flags.contains(&short.to_ascii_lowercase());
+            return self.short_flags.contains(&short);
         }
 
         false
@@ -137,7 +137,7 @@ fn parse_short_flag(raw: Option<&str>) -> Result<Option<char>, String> {
         return Err("short_flag must be one character".to_string());
     }
 
-    Ok(Some(first.to_ascii_lowercase()))
+    Ok(Some(first))
 }
 
 fn append_external_doc(
@@ -707,6 +707,17 @@ mod tests {
         let filter = ProviderFilter::from_args(&["-x".to_string()]);
         assert!(filter.matches("example", Some('x')));
         assert!(!filter.matches("mock", Some('m')));
+    }
+
+    #[test]
+    fn short_flag_is_case_sensitive() {
+        let lower = ProviderFilter::from_args(&["-p".to_string()]);
+        assert!(lower.matches("powermenu", Some('p')));
+        assert!(!lower.matches("path-launcher", Some('P')));
+
+        let upper = ProviderFilter::from_args(&["-P".to_string()]);
+        assert!(upper.matches("path-launcher", Some('P')));
+        assert!(!upper.matches("powermenu", Some('p')));
     }
 
     #[test]

@@ -412,6 +412,8 @@ fn slugify(value: &str) -> String {
 }
 
 fn detached_launch_command(exec: &str) -> String {
-    format!("nohup {} >/dev/null 2>&1 &", exec)
+    // setsid -f fully detaches into a new session so the launched app survives
+    // even if the invoking terminal/session is torn down immediately after exit.
+    format!("setsid -f nohup {} </dev/null >/dev/null 2>&1", exec)
 }
 

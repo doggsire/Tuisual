@@ -10,10 +10,12 @@ A terminal launcher with fuzzy search, a right-hand info pane, and a provider sy
 cargo run                    # show provider catalog
 cargo run -- -x              # load the example provider
 cargo run -- -a              # load desktop apps (dynamic provider)
-cargo run -- -p              # load PATH commands (dynamic provider)
+cargo run -- -P              # load PATH commands (dynamic provider)
 cargo run -- -u              # load Arch updates provider
+cargo run -- -p              # load powermenu provider (hyprshutdown)
 cargo run -- --example       # same as -x, using long flag
 cargo run -- --arch-updates  # same as -u, using long flag
+cargo run -- --powermenu     # same as -p, using long flag
 ```
 
 Multiple flags can be combined to load more than one provider at once.
@@ -82,7 +84,7 @@ The binary must:
 - print a JSON array of items to stdout and nothing else
 - exit 0 on success
 
-Notes about the built-in PATH dynamic provider (`-p`):
+Notes about the built-in PATH dynamic provider (`-P`):
 - PATH commands now open a sub-item menu first instead of launching immediately
 - use `Run Command` to execute the base command without extra flags
 - it includes a `Custom Flags / Args` sub-item that prompts for freeform flags/arguments
@@ -217,7 +219,7 @@ This appends `name=<typed value>` to the parent command before running it.
 3. Print a JSON array of items to stdout and exit 0.
 4. Create `providers/my_provider.json`:
    ```json
-   { "name": "my-provider", "short_flag": "m", "command": "./target/debug/my_provider" }
+  { "name": "my-provider", "short_flag": "m", "command": "./target/debug/my_provider" }
    ```
 5. Run with `cargo run -- -m`.
 
