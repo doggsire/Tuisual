@@ -829,7 +829,7 @@ impl AppState {
             return false;
         };
 
-        if parent.sub_items.is_empty() && parent.provider == "path-commands" {
+        if parent.sub_items.is_empty() && parent.provider == "path-launcher" {
             let discovered = discover_path_sub_items(&parent.title);
             if discovered.is_empty() {
                 self.status = format!("No sub-items discovered for '{}'", parent.title);
