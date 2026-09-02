@@ -14,6 +14,9 @@ ShellRoot {
     property string query: ""
     property string status: "Loading providers..."
     property bool closeAfterAction: false
+    property bool terminalLaunchPending: false
+    property string terminalEmulator: "alacritty"
+    property var terminalProviders: ["arch-updates", "pkg-manager"]
     property var filteredItems: filterItems(items, query)
 
     function score(queryText, candidate) {
@@ -170,23 +173,35 @@ ShellRoot {
             openSubItems(item)
             return
         }
-        runCommand(item.action.value, item.action.type === "shell_command_exit")
+        runCommand(item.action.value, item.action.type === "shell_command_exit", item.provider)
     }
 
     function confirmInput() {
         if (!composeItem)
             return
         const action = composeItem.action.value
+        const provider = composeItem.provider
         const value = query.trim()
         const command = value.length > 0 ? `${action.command} ${action.flag_prefix}${value}` : action.command
         composeItem = null
         query = ""
-        runCommand(command, action.exit_after)
+        runCommand(command, action.exit_after, provider)
     }
 
-    function runCommand(command, exitAfter) {
+    function runCommand(command, exitAfter, provider) {
         closeAfterAction = exitAfter
         status = `Running: ${command}`
+        if (terminalProviders.includes(provider)) {
+            if (terminalLaunchPending)
+                return
+            terminalLaunchPending = true
+            terminalProcess.command = [terminalEmulator, "-e", "sh", "-lc", command]
+            terminalProcess.startDetached()
+            status = `Launched in terminal: ${command}`
+            if (exitAfter)
+                Qt.quit()
+            return
+        }
         actionProcess.exec(["sh", "-lc", command])
     }
 
@@ -231,6 +246,10 @@ ShellRoot {
         }
     }
 
+    Process {
+        id: terminalProcess
+    }
+
     PanelWindow {
         id: launcher
         anchors { top: true; bottom: true; left: true; right: true }
@@ -256,6 +275,7 @@ ShellRoot {
                 border.color: "#a3a3a3"
                 border.width: 2
 
+                Keys.priority: Keys.BeforeItem
                 Keys.onPressed: event => {
                     if (event.key === Qt.Key_Escape) {
                         root.goBack()
@@ -295,7 +315,6 @@ ShellRoot {
                             root.query = text
                             root.currentIndex = 0
                         }
-                        onAccepted: root.composeItem ? root.confirmInput() : root.launch(root.selectedItem())
                         background: Rectangle {
                             color: "#262626"
                             border.width: 2
