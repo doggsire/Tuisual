@@ -34,7 +34,7 @@ After installing or rebuilding the main application, install the QuickShell conf
 Then launch the popup with:
 
 ```
-tuisual-qs
+quisual
 ```
 
 The launcher is installed to `/usr/local/bin` by default. Set `BIN_DIR` before running the
@@ -50,7 +50,7 @@ in your preferred terminal emulator.
 Pass one or more flags to skip the catalog and load specific sets of items directly:
 
 ```
-tuisual -a              # Desktop apps
+tuisual -l              # Desktop apps
 tuisual -P              # PATH commands
 tuisual -u              # Arch package updates
 tuisual -p              # Power menu (lock/logout/restart/shutdown)
@@ -62,7 +62,7 @@ Every provider also has a long-form flag, shown in the catalog view (e.g. `--des
 instead of `-l`). Combine short flags to load more than one provider at once:
 
 ```
-tuisual -aP              # desktop apps + PATH commands together
+tuisual -lP              # desktop apps + PATH commands together
 ```
 
 Run `tuisual -h` or `tuisual --help` at any time to print the list of available flags and exit.

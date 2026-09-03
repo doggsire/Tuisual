@@ -97,8 +97,8 @@ A provider file must not set both.
 
 ```json
 {
-  "name": "desktop-dynamic",
-  "short_flag": "a",
+  "name": "desktop-app-launcher",
+  "short_flag": "l",
   "command": "./target/debug/desktop_apps_provider"
 }
 ```
@@ -191,7 +191,7 @@ Examples:
 ```
 
 ```json
-{ "action": { "type": "provider_hint", "value": "desktop-dynamic" } }
+{ "action": { "type": "provider_hint", "value": "desktop-app-launcher" } }
 ```
 
 ---

@@ -13,22 +13,22 @@ ShellRoot {
     property int currentIndex: 0
     property string query: ""
     property string status: "Loading providers..."
+    property bool packageManagerCatalog: false
+    property bool packageSearchPending: false
     property bool closeAfterAction: false
     property bool infoFocused: false
     property bool terminalLaunchPending: false
     property string terminalEmulator: "alacritty"
-    property var terminalProviders: ["arch-updates", "pkg-manager"]
+    property var terminalProviders: ["arch-updates", "installer"]
     property var filteredItems: filterItems(items, query)
 
-    function score(queryText, candidate) {
-        const queryLower = queryText.toLowerCase()
-        const candidateLower = candidate.toLowerCase()
+    function score(queryLower, candidateLower, candidateLength) {
         if (queryLower.length === 0)
             return 0
         if (queryLower === candidateLower)
-            return 10000 - candidate.length
+            return 10000 - candidateLength
         if (candidateLower.startsWith(queryLower))
-            return 7500 - candidate.length + queryLower.length * 20
+            return 7500 - candidateLength + queryLower.length * 20
 
         let scoreValue = 0
         let queryIndex = 0
@@ -46,21 +46,24 @@ ShellRoot {
             lastMatch = index
             queryIndex++
         }
-        return queryIndex === queryLower.length ? scoreValue + queryLower.length * 40 - candidate.length * 2 : -1
+        return queryIndex === queryLower.length ? scoreValue + queryLower.length * 40 - candidateLength * 2 : -1
     }
 
     function filterItems(source, queryText) {
+        const queryLower = queryText.toLowerCase()
+        if (packageSearchPending)
+            return []
         if (queryText.trim().length === 0
             && source.length > 0
-            && source.every(item => item.provider === "pkg-manager"))
+            && source.every(item => item.provider === "installer"))
             return []
 
         const ranked = []
         for (let index = 0; index < source.length; index++) {
             const item = source[index]
-            const titleScore = score(queryText, item.title) + 600
-            const subtitleScore = score(queryText, item.subtitle)
-            const idScore = score(queryText, item.id) - 120
+            const titleScore = score(queryLower, item._titleLower || item.title.toLowerCase(), item.title.length) + 600
+            const subtitleScore = score(queryLower, item._subtitleLower || item.subtitle.toLowerCase(), item.subtitle.length)
+            const idScore = score(queryLower, item._idLower || item.id.toLowerCase(), item.id.length) - 120
             const best = Math.max(titleScore, subtitleScore, idScore)
             if (best >= 0)
                 ranked.push({ item: item, score: best, index: index })
@@ -103,7 +106,15 @@ ShellRoot {
     function receiveCatalog(text) {
         try {
             const payload = JSON.parse(text)
-            items = payload.items
+            items = payload.items.map(item => {
+                item._titleLower = item.title.toLowerCase()
+                item._subtitleLower = item.subtitle.toLowerCase()
+                item._idLower = item.id.toLowerCase()
+                return item
+            })
+            packageManagerCatalog = payload.items.length > 0
+                && payload.items.every(item => item.provider === "installer")
+            packageSearchPending = false
             currentIndex = 0
             const unknownFlagWarning = payload.rejected.find(entry => entry.includes("no providers matched requested flags"))
             if (unknownFlagWarning) {
@@ -120,6 +131,8 @@ ShellRoot {
     function loadProvider(name, packageQuery) {
         query = ""
         composeItem = null
+        packageManagerCatalog = name === "installer"
+        packageSearchPending = false
         const command = ["tuisual", "--json"]
         if (packageQuery && packageQuery.length > 0)
             command.push("--query", packageQuery)
@@ -129,10 +142,21 @@ ShellRoot {
         catalogProcess.exec(command)
     }
 
-    // Forwards any CLI flags passed to the `tuisual-qs` wrapper (e.g. -P) straight to `tuisual --json`.
+    function searchPackages(packageQuery) {
+        const trimmed = packageQuery.trim()
+        if (trimmed.length === 0)
+            return
+        packageSearchPending = true
+        status = "Searching..."
+        catalogProcess.exec(["tuisual", "--json", "--query", trimmed, "--installer"])
+    }
+
+    // Forwards any CLI flags passed to the `quisual` wrapper (e.g. -P) straight to `tuisual --json`.
     function loadInitial() {
         query = ""
         composeItem = null
+        packageManagerCatalog = false
+        packageSearchPending = false
         const raw = Quickshell.env("TUISUAL_QS_ARGS")
         const extraArgs = raw ? raw.split(/\s+/).filter(arg => arg.length > 0) : []
         status = "Loading..."
@@ -367,6 +391,13 @@ ShellRoot {
         }
     }
 
+    Timer {
+        id: packageSearchTimer
+        interval: 60
+        repeat: false
+        onTriggered: root.searchPackages(root.query)
+    }
+
     Process {
         id: actionProcess
         stdout: StdioCollector { }
@@ -478,6 +509,15 @@ ShellRoot {
                         onTextEdited: {
                             root.query = text
                             root.currentIndex = 0
+                            if (root.packageManagerCatalog && !root.composeItem) {
+                                if (text.trim().length > 0) {
+                                    root.packageSearchPending = true
+                                    packageSearchTimer.restart()
+                                } else {
+                                    root.packageSearchPending = false
+                                    packageSearchTimer.stop()
+                                }
+                            }
                         }
                         Keys.priority: Keys.BeforeItem
                         Keys.onPressed: event => {
