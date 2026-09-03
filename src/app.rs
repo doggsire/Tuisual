@@ -123,7 +123,6 @@ impl AppState {
                     self.should_quit = true;
                 }
             }
-            KeyCode::Char('q') if self.input.is_empty() => self.should_quit = true,
             KeyCode::Char(' ') if !key.modifiers.contains(KeyModifiers::CONTROL) => {
                 if self.try_start_compose_mode() {
                     return;
@@ -829,7 +828,7 @@ impl AppState {
             return false;
         };
 
-        if parent.sub_items.is_empty() && parent.provider == "path-commands" {
+        if parent.sub_items.is_empty() && parent.provider == "path-launcher" {
             let discovered = discover_path_sub_items(&parent.title);
             if discovered.is_empty() {
                 self.status = format!("No sub-items discovered for '{}'", parent.title);
@@ -1079,6 +1078,16 @@ mod tests {
 
         assert_eq!(app.selected, 0);
         assert!(!app.ranked.is_empty());
+    }
+
+    #[test]
+    fn q_is_inserted_in_an_empty_query() {
+        let mut app = AppState::new(vec![test_item("Notes", "echo notes")], 0);
+
+        app.handle_key(crossterm::event::KeyEvent::from(crossterm::event::KeyCode::Char('q')));
+
+        assert_eq!(app.input, "q");
+        assert!(!app.should_quit);
     }
 
     #[test]

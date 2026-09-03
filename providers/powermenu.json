@@ -1,0 +1,72 @@
+{
+  "name": "powermenu",
+  "short_flag": "p",
+  "items": [
+    {
+      "id": "shutdown",
+      "title": "Shutdown",
+      "subtitle": "Exit Hyprland gracefully, then power off",
+      "info": {
+        "summary": "Runs hyprshutdown and executes systemctl poweroff after Hyprland exits.",
+        "fields": [
+          {
+            "label": "Provider",
+            "value": "powermenu"
+          },
+          {
+            "label": "Command",
+            "value": "hyprshutdown --post-cmd 'systemctl poweroff'"
+          }
+        ]
+      },
+      "action": {
+        "type": "shell_command_exit",
+        "value": "hyprshutdown --post-cmd 'systemctl poweroff'"
+      }
+    },
+    {
+      "id": "reboot",
+      "title": "Reboot",
+      "subtitle": "Exit Hyprland gracefully, then reboot",
+      "info": {
+        "summary": "Runs hyprshutdown and executes systemctl reboot after Hyprland exits.",
+        "fields": [
+          {
+            "label": "Provider",
+            "value": "powermenu"
+          },
+          {
+            "label": "Command",
+            "value": "hyprshutdown --post-cmd 'systemctl reboot'"
+          }
+        ]
+      },
+      "action": {
+        "type": "shell_command_exit",
+        "value": "hyprshutdown --post-cmd 'systemctl reboot'"
+      }
+    },
+    {
+      "id": "logout",
+      "title": "Logout",
+      "subtitle": "Gracefully close apps and exit Hyprland",
+      "info": {
+        "summary": "Runs hyprshutdown to gracefully close apps and exit Hyprland.",
+        "fields": [
+          {
+            "label": "Provider",
+            "value": "powermenu"
+          },
+          {
+            "label": "Command",
+            "value": "hyprshutdown"
+          }
+        ]
+      },
+      "action": {
+        "type": "shell_command_exit",
+        "value": "hyprshutdown"
+      }
+    }
+  ]
+}

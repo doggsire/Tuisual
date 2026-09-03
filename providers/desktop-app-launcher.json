@@ -1,5 +1,5 @@
 {
-  "name": "desktop-dynamic",
-  "short_flag": "a",
+  "name": "desktop-app-launcher",
+  "short_flag": "l",
   "command": "./target/debug/desktop_apps_provider"
 }

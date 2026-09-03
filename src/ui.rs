@@ -178,6 +178,20 @@ fn push_wrapped_labeled_lines(
     }
 }
 
+fn info_warning_lines(app: &AppState) -> Vec<Line<'static>> {
+    if !app.status.starts_with("Warning:") {
+        return Vec::new();
+    }
+
+    vec![
+        Line::from(vec![Span::styled(
+            app.status.clone(),
+            Style::default().fg(Color::Rgb(255, 165, 0)).add_modifier(Modifier::BOLD),
+        )]),
+        Line::from(""),
+    ]
+}
+
 pub fn render(frame: &mut Frame, app: &AppState) {
     let layout = compute_layout(frame.area());
 
@@ -327,7 +341,8 @@ fn render_info(frame: &mut Frame, area: Rect, app: &AppState) {
             "This is the final input step."
         };
 
-        let mut lines: Vec<Line<'static>> = vec![
+        let mut lines: Vec<Line<'static>> = info_warning_lines(app);
+        lines.extend(vec![
             Line::from(vec![
                 Span::styled("Mode: ", Style::default().fg(Color::Cyan)),
                 Span::styled("Compose Input", Style::default().fg(Color::Yellow)),
@@ -341,7 +356,7 @@ fn render_info(frame: &mut Frame, area: Rect, app: &AppState) {
                 Span::styled(title.to_string(), Style::default().fg(Color::White)),
             ]),
             Line::from(""),
-        ];
+        ]);
         push_wrapped_labeled_lines(
             &mut lines,
             "Prompt",
@@ -401,16 +416,22 @@ fn render_info(frame: &mut Frame, area: Rect, app: &AppState) {
     }
 
     let Some(selected_ranked) = app.ranked.get(app.selected) else {
-        let empty = Paragraph::new("No selection")
+        let mut lines = info_warning_lines(app);
+        lines.push(Line::from(Span::styled(
+            "No selection",
+            Style::default().fg(Color::DarkGray),
+        )));
+        let empty = Paragraph::new(lines)
             .block(block)
-            .style(Style::default().fg(Color::DarkGray));
+            .wrap(Wrap { trim: false });
         frame.render_widget(empty, area);
         return;
     };
 
     let selected_item = &app.items[selected_ranked.index];
 
-    let mut lines: Vec<Line<'static>> = vec![
+    let mut lines: Vec<Line<'static>> = info_warning_lines(app);
+    lines.extend(vec![
         Line::from(vec![
             Span::styled("Provider: ", Style::default().fg(Color::Cyan)),
             Span::styled(selected_item.provider.clone(), Style::default().fg(Color::White)),
@@ -423,7 +444,7 @@ fn render_info(frame: &mut Frame, area: Rect, app: &AppState) {
             Span::styled("Name: ", Style::default().fg(Color::Cyan)),
             Span::styled(selected_item.title.clone(), Style::default().fg(Color::White)),
         ]),
-    ];
+    ]);
     push_wrapped_labeled_lines(
         &mut lines,
         "Details",

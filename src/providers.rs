@@ -61,7 +61,7 @@ impl ProviderFilter {
                 && !shorts.is_empty()
             {
                 for ch in shorts.chars() {
-                    filter.short_flags.insert(ch.to_ascii_lowercase());
+                    filter.short_flags.insert(ch);
                 }
             }
         }
@@ -83,7 +83,7 @@ impl ProviderFilter {
         }
 
         if let Some(short) = short_flag {
-            return self.short_flags.contains(&short.to_ascii_lowercase());
+            return self.short_flags.contains(&short);
         }
 
         false
@@ -137,7 +137,7 @@ fn parse_short_flag(raw: Option<&str>) -> Result<Option<char>, String> {
         return Err("short_flag must be one character".to_string());
     }
 
-    Ok(Some(first.to_ascii_lowercase()))
+    Ok(Some(first))
 }
 
 fn append_external_doc(
@@ -386,11 +386,7 @@ fn merge_reports(mut base: ProviderLoadReport, next: ProviderLoadReport) -> Prov
     base
 }
 
-pub fn load_all_items() -> ProviderLoadReport {
-    let providers_dir = std::env::var("TUISUAL_PROVIDERS_DIR")
-        .ok()
-        .filter(|value| !value.trim().is_empty())
-        .unwrap_or_else(|| "providers".to_string());
+fn provider_catalog_report(dir: &Path) -> ProviderLoadReport {
     let mut report = ProviderLoadReport::default();
     let mut seen = HashSet::new();
 
@@ -400,8 +396,7 @@ pub fn load_all_items() -> ProviderLoadReport {
         }
     }
 
-    let (external_descriptors, external_rejected) =
-        load_external_provider_descriptors(Path::new(&providers_dir));
+    let (external_descriptors, external_rejected) = load_external_provider_descriptors(dir);
     report.rejected.extend(external_rejected);
 
     for descriptor in external_descriptors {
@@ -417,19 +412,47 @@ pub fn load_all_items() -> ProviderLoadReport {
     report
 }
 
+pub fn load_all_items() -> ProviderLoadReport {
+    let providers_dir = std::env::var("TUISUAL_PROVIDERS_DIR")
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or_else(|| "providers".to_string());
+    provider_catalog_report(Path::new(&providers_dir))
+}
+
 pub fn load_all_items_from_args(args: &[String]) -> ProviderLoadReport {
     let filter = ProviderFilter::from_args(args);
+    let requested_flags = args.join(" ");
+    let providers_dir = std::env::var("TUISUAL_PROVIDERS_DIR")
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or_else(|| "providers".to_string());
+    let providers_path = Path::new(&providers_dir);
+    let (external_descriptors, _) = load_external_provider_descriptors(providers_path);
+
+    let has_matching_provider = built_in_provider_descriptors()
+        .into_iter()
+        .chain(external_descriptors)
+        .any(|descriptor| filter.matches(&descriptor.name, descriptor.short_flag));
+
     let built_in = if filter.is_active() {
         load_provider_items_filtered(&default_providers(), &filter)
     } else {
         load_provider_items(&default_providers())
     };
-    let providers_dir = std::env::var("TUISUAL_PROVIDERS_DIR")
-        .ok()
-        .filter(|value| !value.trim().is_empty())
-        .unwrap_or_else(|| "providers".to_string());
     let external = load_external_provider_items(Path::new(&providers_dir), &filter);
-    merge_reports(built_in, external)
+    let merged = merge_reports(built_in, external);
+
+    if filter.is_active() && !has_matching_provider {
+        let mut catalog = provider_catalog_report(providers_path);
+        catalog.rejected.extend(merged.rejected);
+        catalog
+            .rejected
+            .push(format!("no providers matched requested flags: {}", requested_flags));
+        return catalog;
+    }
+
+    merged
 }
 
 fn built_in_provider_descriptors() -> Vec<ProviderDescriptor> {
@@ -687,6 +710,17 @@ mod tests {
     }
 
     #[test]
+    fn short_flag_is_case_sensitive() {
+        let lower = ProviderFilter::from_args(&["-p".to_string()]);
+        assert!(lower.matches("powermenu", Some('p')));
+        assert!(!lower.matches("path-launcher", Some('P')));
+
+        let upper = ProviderFilter::from_args(&["-P".to_string()]);
+        assert!(upper.matches("path-launcher", Some('P')));
+        assert!(!upper.matches("powermenu", Some('p')));
+    }
+
+    #[test]
     fn short_flag_ignored_when_invalid_length() {
         let mut report = ProviderLoadReport::default();
         let doc = ExternalProviderDoc {
@@ -819,8 +853,33 @@ mod tests {
 
         assert!(!report.items.is_empty(), "-p should load provider items");
         assert!(
-            report.items.iter().any(|item| item.provider == "path-commands"),
-            "-p should include PATH command items"
+            report.items.iter().any(|item| item.provider != "catalog"),
+            "-p should include provider items rather than catalog fallback"
+        );
+        assert!(
+            !report
+                .rejected
+                .iter()
+                .any(|entry| entry.contains("no providers matched requested flags")),
+            "-p should not be treated as an unknown provider flag"
+        );
+    }
+
+    #[test]
+    fn unknown_flag_falls_back_to_provider_catalog() {
+        let report = load_all_items_from_args(&["--definitely-missing-provider".to_string()]);
+
+        assert!(!report.items.is_empty(), "unknown flag should still show provider catalog");
+        assert!(
+            report.items.iter().all(|item| item.provider == "catalog"),
+            "unknown flag should return catalog items"
+        );
+        assert!(
+            report
+                .rejected
+                .iter()
+                .any(|entry| entry.contains("no providers matched requested flags")),
+            "unknown flag should provide a clear rejection reason"
         );
     }
 

@@ -67,7 +67,7 @@ pub struct ProviderItem {
     pub sub_items: Vec<ActionSubItem>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct AppItem {
     pub provider: String,
     pub id: String,

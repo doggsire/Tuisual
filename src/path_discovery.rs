@@ -184,6 +184,7 @@ fn discover_flags_from_man_page(command_name: &str) -> Vec<(String, Option<Strin
     let output = Command::new("man")
         .env("MANPAGER", "cat")
         .env("PAGER", "cat")
+        .stdin(std::process::Stdio::null())
         .arg("--")
         .arg(command_name)
         .output();
