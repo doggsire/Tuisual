@@ -670,37 +670,6 @@ fn build_available_items() -> Vec<ProviderItem> {
     // Sort final titles case-insensitively for predictable search results.
     items.sort_by_cached_key(|a| a.title.to_ascii_lowercase());
 
-    let install_aur = ProviderItem {
-        id: "pkg-aur-install".to_string(),
-        title: "Install package (AUR via paru)".to_string(),
-        subtitle: "Search or install a package from the AUR".to_string(),
-        info: ItemInfo {
-            summary: "Install a package from the AUR by typing a package name. This is a manual fallback when an AUR package cannot be enumerated from the local metadata.".to_string(),
-            fields: vec![
-                InfoField { label: "Source".to_string(), value: "AUR / paru".to_string() },
-                InfoField { label: "Command".to_string(), value: "paru -S --needed <package>".to_string() },
-            ],
-        },
-        action: Action {
-            action_type: "shell_command_exit".to_string(),
-            value: "paru -S --needed".to_string(),
-        },
-        require_sub_item: true,
-        sub_items: vec![ActionSubItem {
-            id: "enter-package".to_string(),
-            title: "Type package name".to_string(),
-            subtitle: "Install a package from the AUR using paru".to_string(),
-            flags: vec![],
-            exit_after: Some(true),
-            input: Some(SubItemInput {
-                flag_prefix: " ".to_string(),
-                prompt: "AUR package name".to_string(),
-            }),
-        }],
-    };
-
-    // Put the manual AUR fallback first so it remains available even when enumeration finds nothing.
-    items.insert(0, install_aur);
     items
 }
 
