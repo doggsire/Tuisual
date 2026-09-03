@@ -3,124 +3,168 @@
   "short_flag": "x",
   "items": [
     {
-      "id": "docs",
-      "title": "Docs",
-      "subtitle": "Open documentation folder",
+      "id": "shell-command",
+      "title": "Shell Command",
+      "subtitle": "Runs a command, then returns to the list",
       "info": {
-        "summary": "Documentation launcher and quick references.",
+        "summary": "The simplest action type. Runs the command and brings you back to Tuisual afterwards.",
         "fields": [
-          {
-            "label": "Provider",
-            "value": "example"
-          },
-          {
-            "label": "Command",
-            "value": "xdg-open ~/Documents"
-          }
+          { "label": "Action type", "value": "shell_command" },
+          { "label": "Command", "value": "echo your-command-here" }
+        ]
+      },
+      "action": { "type": "shell_command", "value": "echo your-command-here" }
+    },
+    {
+      "id": "shell-command-exit",
+      "title": "Shell Command (Exit)",
+      "subtitle": "Runs a command, then closes Tuisual",
+      "info": {
+        "summary": "Same as shell_command, but Tuisual exits right after launching it. Good for opening apps or long-running programs.",
+        "fields": [
+          { "label": "Action type", "value": "shell_command_exit" },
+          { "label": "Command", "value": "your-app-here" }
+        ]
+      },
+      "action": { "type": "shell_command_exit", "value": "echo your-app-here" }
+    },
+    {
+      "id": "shell-command-with-flag",
+      "title": "Shell Command With Flag",
+      "subtitle": "Prompts for input, then runs command+flag",
+      "info": {
+        "summary": "Switches straight to a text prompt. Whatever you type is appended after flag_prefix and the result is run as one command.",
+        "fields": [
+          { "label": "Action type", "value": "shell_command_with_flag" },
+          { "label": "Base command", "value": "your-tool" },
+          { "label": "Flag prefix", "value": "--option=" }
         ]
       },
       "action": {
-        "type": "shell_command",
-        "value": "xdg-open ~/Documents"
+        "type": "shell_command_with_flag",
+        "value": {
+          "command": "echo your-tool",
+          "flag_prefix": "--option=",
+          "prompt": "Enter a value for --option",
+          "exit_after": false
+        }
       }
     },
     {
-      "id": "backup-status",
-      "title": "Backup Status",
-      "subtitle": "Check backup progress",
+      "id": "provider-hint",
+      "title": "Provider Hint",
+      "subtitle": "Jumps to another provider's item list",
       "info": {
-        "summary": "Show the latest backup status and quick diagnostics.",
+        "summary": "Instead of running a command, this loads another provider by name. Useful for building a menu of menus.",
         "fields": [
-          {
-            "label": "Provider",
-            "value": "example"
-          },
-          {
-            "label": "Command",
-            "value": "echo Checking backup status"
-          }
+          { "label": "Action type", "value": "provider_hint" },
+          { "label": "Target provider", "value": "example" }
         ]
       },
-      "action": {
-        "type": "shell_command",
-        "value": "echo Checking backup status"
-      }
+      "action": { "type": "provider_hint", "value": "example" }
     },
     {
-      "id": "fastfetch",
-      "title": "Fastfetch",
-      "subtitle": "Quickly fetch system information",
+      "id": "static-flags-menu",
+      "title": "Static Flags Menu",
+      "subtitle": "Space/Enter to pick a preset flag combo",
       "info": {
-        "summary": "Quickly fetch system information using fastfetch.",
+        "summary": "require_sub_item forces you to pick one of the fixed options below; each sub_item just appends its own preset flags to the base command.",
         "fields": [
-          {
-            "label": "Provider",
-            "value": "example"
-          },
-          {
-            "label": "Command",
-            "value": "fastfetch"
-          }
+          { "label": "Action type", "value": "shell_command_exit" },
+          { "label": "Base command", "value": "your-tool" }
         ]
       },
-      "action": {
-        "type": "shell_command_exit",
-        "value": "fastfetch"
-      }
-    },
-    {
-      "id": "wappify",
-      "title": "Wappify (Choose Provider)",
-      "subtitle": "Launch Wappify directly or choose provider steps",
-      "info": {
-        "summary": "Launch Wappify directly, or open sub-items for step-by-step flags.",
-        "fields": [
-          {
-            "label": "Provider",
-            "value": "example"
-          },
-          {
-            "label": "Base Command",
-            "value": "wappify"
-          }
-        ]
-      },
-      "action": {
-        "type": "shell_command_exit",
-        "value": "wappify"
-      },
+      "action": { "type": "shell_command_exit", "value": "echo your-tool" },
       "require_sub_item": true,
       "sub_items": [
         {
-          "id": "Name",
-          "title": "Webapp Name (Input)",
-          "subtitle": "Type webapp name, then Space for URL step",
+          "id": "plain",
+          "title": "Plain",
+          "subtitle": "Runs with no extra flags",
+          "flags": []
+        },
+        {
+          "id": "verbose",
+          "title": "Verbose",
+          "subtitle": "Runs with --verbose",
+          "flags": ["--verbose"]
+        },
+        {
+          "id": "dry-run",
+          "title": "Dry Run",
+          "subtitle": "Runs with --dry-run --verbose",
+          "flags": ["--dry-run", "--verbose"],
+          "exit_after": false
+        }
+      ]
+    },
+    {
+      "id": "single-input-prompt",
+      "title": "Single Input Prompt",
+      "subtitle": "One-step compose: type a value, then run",
+      "info": {
+        "summary": "A single sub_item with an input field. Selecting it opens a text prompt; the typed text is appended after flag_prefix and the command runs.",
+        "fields": [
+          { "label": "Action type", "value": "shell_command_exit" },
+          { "label": "Base command", "value": "your-tool" }
+        ]
+      },
+      "action": { "type": "shell_command_exit", "value": "echo your-tool" },
+      "require_sub_item": true,
+      "sub_items": [
+        {
+          "id": "target",
+          "title": "Target (Input)",
+          "subtitle": "Type a value; --target= is added automatically",
+          "flags": [],
+          "input": {
+            "flag_prefix": "--target=",
+            "prompt": "Enter a target value"
+          },
+          "exit_after": true
+        }
+      ]
+    },
+    {
+      "id": "multi-step-compose-chain",
+      "title": "Multi-Step Compose Chain",
+      "subtitle": "Chain several inputs together before running",
+      "info": {
+        "summary": "Each step requires the next until the final one, which runs the fully composed command. Great for building a command out of several pieces of user input in sequence.",
+        "fields": [
+          { "label": "Action type", "value": "shell_command_exit" },
+          { "label": "Base command", "value": "your-tool" }
+        ]
+      },
+      "action": { "type": "shell_command_exit", "value": "echo your-tool" },
+      "require_sub_item": true,
+      "sub_items": [
+        {
+          "id": "step-one",
+          "title": "Step 1: Name (Input)",
+          "subtitle": "Type a name, then continue to step 2",
           "flags": [],
           "input": {
             "flag_prefix": "name=",
-            "prompt": "Enter the webapp name"
+            "prompt": "Enter a name"
           },
           "require_sub_item": true,
           "sub_items": [
             {
-              "id": "URL",
-              "title": "Webapp URL (Input)",
-              "subtitle": "Type only URL value; url= is added automatically",
-              "flags": [],
-              "input": {
-                "flag_prefix": "url=",
-                "prompt": "Enter the webapp URL"
-              },
-              "require_sub_item": false,
+              "id": "step-two",
+              "title": "Step 2: Category (Choose)",
+              "subtitle": "Pick a category, then continue to step 3",
+              "flags": ["category=a"],
+              "require_sub_item": true,
               "sub_items": [
                 {
-                  "id": "Icon",
-                  "title": "Webapp Icon (Input)",
-                  "subtitle": "Type only icon value; icon= is added automatically",
+                  "id": "step-three",
+                  "title": "Step 3: Note (Input, Final)",
+                  "subtitle": "Type a closing note; runs the composed command",
                   "flags": [],
                   "input": {
-                    "flag_prefix": "icon=",
-                    "prompt": "Enter the webapp icon"
+                    "flag_prefix": "note=",
+                    "prompt": "Enter a final note"
                   },
                   "exit_after": true
                 }

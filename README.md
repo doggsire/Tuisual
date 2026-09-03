@@ -39,7 +39,8 @@ This builds Tuisual and installs it, along with its helper programs, to your sys
 tuisual
 ```
 
-For a QuickShell popup on Wayland, install the optional frontend and run it with:
+For Tuisual's QuickShell frontend, launched as `quisual` on Wayland, install the optional
+frontend (QuickShell's `qs` command is required) and run it with:
 
 ```
 ./install-quickshell.sh

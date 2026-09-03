@@ -11,6 +11,7 @@ customizing and extending it.
 ## Table of contents
 
 - [Where providers live](#where-providers-live)
+- [The example provider](#the-example-provider)
 - [Static providers (plain JSON)](#static-providers-plain-json)
 - [Dynamic providers (JSON + a program)](#dynamic-providers-json--a-program)
 - [The item schema](#the-item-schema)
@@ -38,6 +39,33 @@ TUISUAL_PROVIDERS_DIR=/path/to/my/providers tuisual
 To add a new provider, drop a new `.json` file into that directory — no rebuild or restart script
 required, just a fresh `tuisual` run.
 
+### Installed layout
+
+When installed with `./install.sh`, the `tuisual` launcher is a wrapper that sets
+`TUISUAL_PROVIDERS_DIR` to `~/.config/tuisual/providers` and adds `~/.local/bin` to `PATH`. The
+dynamic helper binaries are installed in that directory, while provider JSON files are copied to
+the configuration directory. The wrapper also rewrites installed provider commands that point at
+build-tree paths so they use the installed helpers.
+
+To use another provider directory, set `TUISUAL_PROVIDERS_DIR` explicitly. This overrides the
+directory selected by the installed wrapper:
+
+```
+TUISUAL_PROVIDERS_DIR=/path/to/my/providers tuisual
+```
+
+---
+
+## The example provider
+
+`providers/example.json` is a reference document, not a normal built-in provider. It demonstrates
+static items, shell actions, required sub-items, input prompts, and a multi-step compose chain.
+Use it as a starting point when creating your own provider definitions.
+
+The installation scripts deliberately do not copy `example.json` into the installed provider
+directory. This keeps the catalog focused on usable providers. From a source checkout, you can
+load it explicitly with `cargo run -- -x` when testing or exploring the examples.
+
 ---
 
 ## Static providers (plain JSON)
@@ -47,8 +75,8 @@ The simplest provider is a file listing its items directly. Good for a handful o
 
 ```json
 {
-  "name": "example",
-  "short_flag": "x",
+  "name": "my-provider",
+  "short_flag": "m",
   "items": [
     {
       "id": "hello",
@@ -66,16 +94,16 @@ The simplest provider is a file listing its items directly. Good for a handful o
 }
 ```
 
-- `name` — the provider's unique identifier. Also usable as a long CLI flag: `--example`.
+- `name` — the provider's unique identifier. Also usable as a long CLI flag: `--my-provider`.
 - `short_flag` — a single character usable as a short CLI flag: `-x`. Optional.
 - `items` — an array of items following the [item schema](#the-item-schema) below.
 
 Run it with:
 
 ```
-tuisual -x
+tuisual -m
 # or
-tuisual --example
+tuisual --my-provider
 ```
 
 ---
@@ -229,6 +257,9 @@ case.
 Each sub-item appends its `flags` to the parent's command before running it. Sub-items can also
 nest further sub-items (`sub_items` inside a sub-item), useful for multi-level menus.
 
+Sub-items may also set `exit_after` to `true` or `false` to override whether Tuisual closes after
+running the resulting command. If omitted, the parent action type determines the default.
+
 ---
 
 ## Input prompts (compose flow)
@@ -248,7 +279,36 @@ A sub-item can ask for freeform text instead of (or in addition to) fixed flags:
 
 When selected, Tuisual switches to a text input. Whatever you type is appended after
 `flag_prefix` (e.g. `name=alice`) and the whole thing is appended to the parent command before
-it runs.
+it runs. A sub-item can mark itself with `require_sub_item: true` and provide more `sub_items` to
+continue a multi-step compose chain. In a required chain, `Enter` or `Space` advances to the next
+step; the final step runs the composed command. For example:
+
+```json
+{
+  "id": "webapp-name",
+  "title": "Webapp Name",
+  "subtitle": "Enter a name, then continue to the URL",
+  "flags": [],
+  "input": {
+    "flag_prefix": "name=",
+    "prompt": "Enter the webapp name"
+  },
+  "require_sub_item": true,
+  "sub_items": [
+    {
+      "id": "webapp-url",
+      "title": "Webapp URL",
+      "subtitle": "Enter the URL",
+      "flags": [],
+      "input": {
+        "flag_prefix": "url=",
+        "prompt": "Enter the webapp URL"
+      },
+      "exit_after": true
+    }
+  ]
+}
+```
 
 ---
 
@@ -322,6 +382,12 @@ an explicit catalog file at `providers/path_flags_catalog.json`:
 Only well-formed flags (`--long-flag` or `-x`) are accepted; malformed entries are ignored. Add
 an entry here any time you want a specific flag to show up as a sub-item for a specific command.
 
+The catalog defaults to `providers/path_flags_catalog.json`. Override it for a one-off run with:
+
+```
+TUISUAL_PATH_FLAGS_CATALOG=/path/to/catalog.json tuisual -P
+```
+
 ### Automatic flag discovery
 
 Separately, Tuisual tries to discover flags on its own by reading (not executing) these sources
@@ -349,11 +415,10 @@ you need to tune it.
 | `TUISUAL_PROVIDERS_DIR`                          | Override the directory Tuisual loads provider `.json` files from.       |
 | `TUISUAL_PROVIDER_MODE`                          | Set to `1` by Tuisual automatically when invoking a dynamic provider.   |
 | `TUISUAL_PATH_FLAGS_CATALOG`                     | Override the path to the curated PATH flag catalog JSON.                |
-| `TUISUAL_PATH_AUTODISCOVER`                      | Toggle completion/man/docs-based auto-discovery (default: on; set `0`/`false`/`no`/`off` to disable). |
-| `TUISUAL_PATH_AUTODISCOVER_MAN_DOCS_LIMIT`       | Max commands to scan with man/docs when completion data is unavailable (default `120`). |
-| `TUISUAL_PATH_AUTODISCOVER_MAN_DOCS_BUDGET_MS`   | Total time budget in milliseconds for man/docs discovery per run (default `3000`). |
-| `TUISUAL_PATH_AUTODISCOVER_DOC_FILES_LIMIT`      | Max documentation files read per command during docs discovery (default `8`). |
 | `TUISUAL_PROVIDER_TIMING`                        | Set to `1` to print provider load timing to help debug slow startups.   |
 | `TUISUAL_PROVIDER_DISABLE_CACHE`                 | Set to `1` to disable caching of heavy provider command output (e.g. package manager queries). |
+| `TUISUAL_PACMAN_INSTALLED_CACHE_TTL_SECS`        | Cache lifetime for locally installed pacman packages (default `30`).   |
+| `TUISUAL_AUR_INSTALLED_CACHE_TTL_SECS`           | Cache lifetime for locally installed AUR packages (default `30`).      |
+| `TUISUAL_FLATPAK_INSTALLED_CACHE_TTL_SECS`       | Cache lifetime for installed Flatpak apps (default `30`).              |
 | `TUISUAL_PACMAN_REPO_CACHE_TTL_SECS`             | Cache lifetime for `pacman` repository queries used by the package manager provider. |
 | `TUISUAL_FLATPAK_REMOTE_CACHE_TTL_SECS`          | Cache lifetime for `flatpak remote-ls` queries used by the package manager provider. |
