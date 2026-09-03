@@ -7,10 +7,15 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
 pub trait Provider {
+    // Every provider supplies a stable name used in item metadata and command-line flags.
     fn name(&self) -> &'static str;
+    // A provider may optionally expose a one-letter shortcut. Returning None means
+    // users can still select it by its full name.
     fn short_flag(&self) -> Option<char> {
         None
     }
+    // Providers return raw data. The shared loader validates and converts that data
+    // into AppItems before the rest of the application uses it.
     fn list_items(&self) -> Vec<ProviderItem>;
 }
 
@@ -39,6 +44,8 @@ struct ProviderDescriptor {
     source: String,
 }
 
+// A provider filter decides which providers should be loaded.
+// Example: if the user typed "--path-launcher" or "-P", only that provider is kept.
 #[derive(Debug, Default)]
 struct ProviderFilter {
     long_flags: HashSet<String>,
@@ -46,6 +53,9 @@ struct ProviderFilter {
 }
 
 impl ProviderFilter {
+    // Turn command-line arguments into two lookup sets.
+    // Long names are stored without `--`, while short options are stored one character
+    // at a time so a combined form like `-abc` can select three providers.
     fn from_args(args: &[String]) -> Self {
         let mut filter = Self::default();
 
@@ -69,10 +79,15 @@ impl ProviderFilter {
         filter
     }
 
+    // An empty filter means "load everything". A non-empty filter means at least one
+    // provider flag was requested and providers must pass `matches`.
     fn is_active(&self) -> bool {
         !self.long_flags.is_empty() || !self.short_flags.is_empty()
     }
 
+    // Decide whether one provider satisfies the requested flags.
+    // If no filter is active, every provider matches. Otherwise either its long name
+    // or its optional short flag must appear in the filter.
     fn matches(&self, name: &str, short_flag: Option<char>) -> bool {
         if !self.is_active() {
             return true;
@@ -90,22 +105,31 @@ impl ProviderFilter {
     }
 }
 
+// Load all items for a list of provider objects.
+// This is the simplest version: no filters, so everything is included.
 pub fn load_provider_items(providers: &[Box<dyn Provider>]) -> ProviderLoadReport {
     load_provider_items_filtered(providers, &ProviderFilter::default())
 }
 
+// Filtered loading is like choosing only certain shelves in a library.
+// If a provider does not match the requested flag, it is skipped.
 fn load_provider_items_filtered(
     providers: &[Box<dyn Provider>],
     filter: &ProviderFilter,
 ) -> ProviderLoadReport {
+    // Keep accepted items and rejection messages together so loading can continue after
+    // one malformed provider item instead of losing all results.
     let mut report = ProviderLoadReport::default();
 
     for provider in providers {
+        // Skip providers that were not requested by the user.
         if !filter.matches(provider.name(), provider.short_flag()) {
             continue;
         }
 
         for raw in provider.list_items() {
+            // Save the ID before validation consumes the raw item, so an error can say
+            // which provider item was rejected.
             let item_id = raw.id.clone();
             match AppItem::from_provider_item(provider.name(), raw) {
                 Ok(item) => report.items.push(item),
@@ -119,10 +143,15 @@ fn load_provider_items_filtered(
     report
 }
 
+// This reads an external provider file, which is just a JSON config describing a provider.
+// Example: it might say the provider name is "path-launcher", its short flag is "P",
+// and it may include a list of items or a command that generates items.
 fn parse_external_provider_doc(content: &str) -> Result<ExternalProviderDoc, String> {
     serde_json::from_str(content).map_err(|err| format!("json parse error: {}", err))
 }
 
+// A short flag is a single character like "P" or "x".
+// This function validates that the value is only one character long.
 fn parse_short_flag(raw: Option<&str>) -> Result<Option<char>, String> {
     let Some(value) = raw else {
         return Ok(None);
@@ -140,6 +169,9 @@ fn parse_short_flag(raw: Option<&str>) -> Result<Option<char>, String> {
     Ok(Some(first))
 }
 
+// Turn a JSON provider file into AppItems.
+// This step also checks that the provider matches the user's requested flags
+// before any items are added to the final list.
 fn append_external_doc(
     report: &mut ProviderLoadReport,
     source: &str,
@@ -213,6 +245,8 @@ fn append_external_doc(
     }
 }
 
+// A provider command might be relative to the project folder or an absolute path.
+// This helper resolves it to a usable path so the app can run the provider binary.
 fn resolve_provider_command(command: &str) -> String {
     let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let trimmed = command.trim();
@@ -234,6 +268,8 @@ fn resolve_provider_command(command: &str) -> String {
     trimmed.to_string()
 }
 
+// If a provider is defined as a Rust binary, we make sure it exists.
+// If not, we build it automatically from the project so the provider can run.
 fn ensure_provider_binary_exists(command: &str) -> Result<String, String> {
     let resolved = resolve_provider_command(command);
     if Path::new(&resolved).exists() {
@@ -274,15 +310,29 @@ fn ensure_provider_binary_exists(command: &str) -> Result<String, String> {
     }
 }
 
+// The provider can either be a compiled binary or a shell command.
+// This function handles the binary case by making sure the binary exists and then asking it for JSON.
 fn run_provider_binary_command(command: &str) -> Result<Vec<ProviderItem>, String> {
     let resolved = ensure_provider_binary_exists(command)?;
     run_provider_shell_and_parse(&resolved, "command", "provider command")
 }
 
+// This handles the shell-command form of a provider.
+// Example: "python3 ./my_provider.py".
 fn run_provider_shell_command(command: &str) -> Result<Vec<ProviderItem>, String> {
     run_provider_shell_and_parse(command, "shell command", "provider shell command")
 }
 
+// This is where the actual external provider command is run.
+//
+// Step by step:
+// 1. open a shell
+// 2. cd into the project root
+// 3. run the provider command
+// 4. capture stdout and stderr
+// 5. require the process to exit successfully
+// 6. parse stdout as JSON
+// 7. turn the JSON into Vec<ProviderItem>
 fn run_provider_shell_and_parse(
     command: &str,
     error_context: &str,
@@ -317,6 +367,9 @@ fn run_provider_shell_and_parse(
     Ok(items)
 }
 
+// This is the loader for external provider JSON files.
+// It reads every .json file in the providers folder, parses it, and turns it into app items.
+// If an item is invalid or a provider is filtered out, it is added to the rejection list.
 fn load_external_provider_items(dir: &Path, filter: &ProviderFilter) -> ProviderLoadReport {
     let mut report = ProviderLoadReport::default();
 
@@ -380,12 +433,16 @@ fn load_external_provider_items(dir: &Path, filter: &ProviderFilter) -> Provider
     report
 }
 
+// Combine two provider load reports into one.
+// This is used when the app loads built-in providers and external provider JSON files separately.
 fn merge_reports(mut base: ProviderLoadReport, next: ProviderLoadReport) -> ProviderLoadReport {
     base.items.extend(next.items);
     base.rejected.extend(next.rejected);
     base
 }
 
+// Build the "provider catalog" list shown when no specific provider flag was requested.
+// This makes the app present a menu of every provider that was discovered.
 fn provider_catalog_report(dir: &Path) -> ProviderLoadReport {
     let mut report = ProviderLoadReport::default();
     let mut seen = HashSet::new();
@@ -412,6 +469,8 @@ fn provider_catalog_report(dir: &Path) -> ProviderLoadReport {
     report
 }
 
+// This is the default behavior when the app starts without a provider filter.
+// It loads the provider catalog so the user can pick a provider from the list.
 pub fn load_all_items() -> ProviderLoadReport {
     let providers_dir = std::env::var("TUISUAL_PROVIDERS_DIR")
         .ok()
@@ -420,6 +479,8 @@ pub fn load_all_items() -> ProviderLoadReport {
     provider_catalog_report(Path::new(&providers_dir))
 }
 
+// This is the main loading method for command-line usage.
+// It understands which providers the user asked for and merges built-in and external ones together.
 pub fn load_all_items_from_args(args: &[String]) -> ProviderLoadReport {
     let filter = ProviderFilter::from_args(args);
     let requested_flags = args.join(" ");
@@ -455,6 +516,7 @@ pub fn load_all_items_from_args(args: &[String]) -> ProviderLoadReport {
     merged
 }
 
+// Describe built-in providers in a simple format for the provider catalog.
 fn built_in_provider_descriptors() -> Vec<ProviderDescriptor> {
     default_providers()
         .iter()
@@ -466,6 +528,8 @@ fn built_in_provider_descriptors() -> Vec<ProviderDescriptor> {
         .collect()
 }
 
+// Look through the external provider folder and gather provider names and flags.
+// This is used to decide which external provider files exist and whether they match a filter.
 fn load_external_provider_descriptors(dir: &Path) -> (Vec<ProviderDescriptor>, Vec<String>) {
     let mut descriptors = Vec::new();
     let mut rejected = Vec::new();
@@ -540,6 +604,8 @@ fn load_external_provider_descriptors(dir: &Path) -> (Vec<ProviderDescriptor>, V
     (descriptors, rejected)
 }
 
+// Turn a discovered provider descriptor into a catalog item that the user can click.
+// Clicking it loads that provider's actual items.
 fn provider_catalog_item(descriptor: &ProviderDescriptor) -> AppItem {
     AppItem {
         provider: "catalog".to_string(),
@@ -573,6 +639,9 @@ fn provider_catalog_item(descriptor: &ProviderDescriptor) -> AppItem {
 }
 
 pub fn default_providers() -> Vec<Box<dyn Provider>> {
+    // Built-in providers used to be registered here. The current project discovers
+    // its providers from external JSON files and helper binaries, so this list is
+    // intentionally empty while the function remains the common extension point.
     Vec::new()
 }
 
@@ -588,10 +657,13 @@ mod tests {
     struct BadProvider;
 
     impl Provider for BadProvider {
+        // Give the fake provider a name so the loader can attach it to error messages.
         fn name(&self) -> &'static str {
             "bad"
         }
 
+        // Return one deliberately invalid item. The empty title lets the test verify
+        // that the shared validation path rejects bad provider output.
         fn list_items(&self) -> Vec<ProviderItem> {
             vec![ProviderItem {
                 id: "broken".to_string(),
@@ -611,6 +683,7 @@ mod tests {
         }
     }
 
+    // Invalid provider data should be reported, not added to the usable item list.
     #[test]
     fn invalid_provider_items_are_rejected() {
         let providers: Vec<Box<dyn Provider>> = vec![Box::new(BadProvider)];
@@ -620,6 +693,7 @@ mod tests {
         assert_eq!(report.rejected.len(), 1);
     }
 
+    // A valid JSON document should deserialize into its provider name and item list.
     #[test]
     fn parses_valid_external_doc() {
         let json = r#"{
@@ -643,6 +717,7 @@ mod tests {
         assert_eq!(doc.items.len(), 1);
     }
 
+    // Malformed JSON should return an error instead of silently producing an empty provider.
     #[test]
     fn rejects_bad_external_doc_json() {
         let json = "{ this is not json }";
@@ -650,6 +725,8 @@ mod tests {
         assert!(result.is_err());
     }
 
+    // Even when the outer JSON is valid, each contained item still goes through model
+    // validation and must be reported if it is malformed.
     #[test]
     fn rejects_invalid_items_inside_external_doc() {
         let mut report = ProviderLoadReport::default();
@@ -680,6 +757,8 @@ mod tests {
         assert_eq!(report.rejected.len(), 1);
     }
 
+    // Merging combines both accepted items and rejection messages, preserving information
+    // from the built-in and external loading passes.
     #[test]
     fn merges_reports() {
         let base = ProviderLoadReport {
@@ -695,6 +774,7 @@ mod tests {
         assert_eq!(merged.rejected.len(), 2);
     }
 
+    // A full provider flag selects the provider whose name matches it.
     #[test]
     fn long_flag_selects_matching_provider() {
         let filter = ProviderFilter::from_args(&["--example".to_string()]);
@@ -702,6 +782,7 @@ mod tests {
         assert!(!filter.matches("mock", Some('m')));
     }
 
+    // A one-letter flag selects the provider that advertises that shortcut.
     #[test]
     fn short_flag_selects_matching_provider() {
         let filter = ProviderFilter::from_args(&["-x".to_string()]);
@@ -709,6 +790,8 @@ mod tests {
         assert!(!filter.matches("mock", Some('m')));
     }
 
+    // Short flags are intentionally case-sensitive because `-p` and `-P` can identify
+    // different providers.
     #[test]
     fn short_flag_is_case_sensitive() {
         let lower = ProviderFilter::from_args(&["-p".to_string()]);
@@ -720,6 +803,7 @@ mod tests {
         assert!(!upper.matches("powermenu", Some('p')));
     }
 
+    // An external provider may only use one character for its short flag.
     #[test]
     fn short_flag_ignored_when_invalid_length() {
         let mut report = ProviderLoadReport::default();
@@ -735,6 +819,8 @@ mod tests {
         assert_eq!(report.rejected.len(), 1);
     }
 
+    // With no requested flag, the loader returns catalog entries that represent the
+    // providers the user can choose from next.
     #[test]
     fn no_flag_loads_provider_catalog() {
         let report = load_all_items();
@@ -747,15 +833,19 @@ mod tests {
         );
     }
 
+    // Provider loading must preserve submenu data on the parent item. The app needs
+    // those children later when the user opens the action's next step.
     #[test]
     fn provider_item_sub_items_stay_attached_to_parent() {
         struct SubItemProvider;
 
         impl Provider for SubItemProvider {
+            // Name the fake provider for the resulting AppItem metadata.
             fn name(&self) -> &'static str {
                 "sub"
             }
 
+            // Return one parent with one child option so the loader's conversion can be checked.
             fn list_items(&self) -> Vec<ProviderItem> {
                 vec![ProviderItem {
                     id: "base".to_string(),
@@ -789,6 +879,8 @@ mod tests {
         assert_eq!(report.items[0].sub_items.len(), 1);
     }
 
+    // A shell command provider can print JSON instead of listing items in its document.
+    // This test verifies that generated JSON is executed, parsed, and converted.
     #[test]
     fn dynamic_provider_command_generates_items() {
         let mut report = ProviderLoadReport::default();
@@ -813,6 +905,8 @@ mod tests {
         assert_eq!(report.items[0].provider, "dynamic");
     }
 
+    // A dynamic provider with neither static items nor a generating command has no usable
+    // output and should be recorded as rejected.
     #[test]
     fn path_provider_helper_emits_items_when_invoked_by_tuisual() {
         let previous = std::env::var_os("TUISUAL_PROVIDER_MODE");
@@ -831,6 +925,8 @@ mod tests {
         assert!(!items.is_empty(), "PATH provider emitted no items");
     }
 
+    // This integration-style test invokes the real PATH helper in provider mode and checks
+    // that its stdout is valid provider data rather than ordinary terminal output.
     #[test]
     fn dynamic_provider_requires_items_or_command_output() {
         let mut report = ProviderLoadReport::default();
