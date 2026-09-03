@@ -28,6 +28,13 @@ struct JsonCatalog {
 
 fn main() -> Result<()> {
     let mut args: Vec<String> = std::env::args().skip(1).collect();
+    let path_flags_query = take_option(&mut args, "--path-flags");
+    if let Some(command_name) = path_flags_query {
+        let sub_items = path_discovery::discover_path_sub_items(&command_name);
+        println!("{}", serde_json::to_string(&sub_items)?);
+        return Ok(());
+    }
+
     let json_mode = take_flag(&mut args, "--json");
     let provider_query = take_option(&mut args, "--query");
 

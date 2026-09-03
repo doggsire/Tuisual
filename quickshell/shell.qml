@@ -14,6 +14,7 @@ ShellRoot {
     property string query: ""
     property string status: "Loading providers..."
     property bool closeAfterAction: false
+    property bool infoFocused: false
     property bool terminalLaunchPending: false
     property string terminalEmulator: "alacritty"
     property var terminalProviders: ["arch-updates", "pkg-manager"]
@@ -49,6 +50,11 @@ ShellRoot {
     }
 
     function filterItems(source, queryText) {
+        if (queryText.trim().length === 0
+            && source.length > 0
+            && source.every(item => item.provider === "pkg-manager"))
+            return []
+
         const ranked = []
         for (let index = 0; index < source.length; index++) {
             const item = source[index]
@@ -67,15 +73,31 @@ ShellRoot {
         return currentIndex >= 0 && currentIndex < filteredItems.length ? filteredItems[currentIndex] : null
     }
 
+    function toggleFocus() {
+        infoFocused = !infoFocused
+        status = infoFocused ? "Focus: Info" : "Focus: Results"
+    }
+
+    function scrollInfoBy(amount) {
+        const maxY = Math.max(0, infoFlickable.contentHeight - infoFlickable.height)
+        infoFlickable.contentY = Math.max(0, Math.min(maxY, infoFlickable.contentY + amount))
+    }
+
     function statusColor(statusText) {
         const normalized = statusText.toLowerCase()
         if (normalized.includes("failed") || normalized.includes("error"))
-            return "#dc2626"
+            return Theme.colorError
         if (normalized.includes("rejected"))
-            return "#d97706"
+            return Theme.colorWarning
         if (normalized.includes("completed"))
-            return "#16a34a"
-        return "#a3a3a3"
+            return Theme.colorSuccess
+        return Theme.colorTextSecondary
+    }
+
+    function controlsHint() {
+        return composeItem
+            ? "Type: input | Enter: confirm | Space: continue chain | Esc: cancel"
+            : "Tab: focus pane | Up/Down: active pane | PgUp/PgDn: info | Enter: launch | Esc: quit"
     }
 
     function receiveCatalog(text) {
@@ -83,7 +105,12 @@ ShellRoot {
             const payload = JSON.parse(text)
             items = payload.items
             currentIndex = 0
-            status = payload.rejected.length > 0 ? `${payload.items.length} items, ${payload.rejected.length} rejected` : `${payload.items.length} items`
+            const unknownFlagWarning = payload.rejected.find(entry => entry.includes("no providers matched requested flags"))
+            if (unknownFlagWarning) {
+                status = `Warning: ${unknownFlagWarning}`
+            } else {
+                status = payload.rejected.length > 0 ? `${payload.items.length} items, ${payload.rejected.length} rejected` : `${payload.items.length} items`
+            }
         } catch (error) {
             status = `Provider data error: ${error}`
             items = []
@@ -100,6 +127,16 @@ ShellRoot {
             command.push(`--${name}`)
         status = "Loading..."
         catalogProcess.exec(command)
+    }
+
+    // Forwards any CLI flags passed to the `tuisual-qs` wrapper (e.g. -P) straight to `tuisual --json`.
+    function loadInitial() {
+        query = ""
+        composeItem = null
+        const raw = Quickshell.env("TUISUAL_QS_ARGS")
+        const extraArgs = raw ? raw.split(/\s+/).filter(arg => arg.length > 0) : []
+        status = "Loading..."
+        catalogProcess.exec(["tuisual", "--json"].concat(extraArgs))
     }
 
     function appendFlags(action, subItem) {
@@ -132,8 +169,40 @@ ShellRoot {
         return { type: exitAfter ? "shell_command_exit" : "shell_command", value: action.value + suffix }
     }
 
-    function openSubItems(parent) {
-        const childItems = parent.sub_items.map(subItem => ({
+    function discoverPathFlags(item) {
+        if (pathFlagsProcess.running) {
+            status = "Still discovering flags, please wait..."
+            return
+        }
+        status = "Discovering flags..."
+        pathFlagsProcess.pendingItem = item
+        pathFlagsProcess.exec(["tuisual", "--path-flags", item.title])
+    }
+
+    function receivePathFlags(item, text) {
+        try {
+            const subItems = JSON.parse(text)
+            if (subItems.length === 0) {
+                status = `No sub-items discovered for '${item.title}'`
+                return
+            }
+            openSubItems({
+                provider: item.provider,
+                id: item.id,
+                title: item.title,
+                subtitle: item.subtitle,
+                info: item.info,
+                action: item.action,
+                require_sub_item: item.require_sub_item,
+                sub_items: subItems
+            })
+        } catch (error) {
+            status = `Path flag discovery error: ${error}`
+        }
+    }
+
+    function buildChildItem(parent, subItem) {
+        return {
             provider: parent.provider,
             id: `${parent.id}::${subItem.id}`,
             title: subItem.title,
@@ -142,7 +211,11 @@ ShellRoot {
             action: appendFlags(parent.action, subItem),
             require_sub_item: subItem.require_sub_item,
             sub_items: subItem.sub_items
-        }))
+        }
+    }
+
+    function openSubItems(parent) {
+        const childItems = parent.sub_items.map(subItem => buildChildItem(parent, subItem))
         viewStack = viewStack.concat([{ items: items, query: query }])
         items = childItems
         query = ""
@@ -150,23 +223,42 @@ ShellRoot {
         status = `Options for ${parent.title}`
     }
 
+    function startCompose(item) {
+        composeItem = item
+        query = ""
+        status = item.action.value.prompt
+        input.forceActiveFocus()
+    }
+
+    // Auto-skips the sub-items menu when a required parent has exactly one option, recursing into it.
+    function handleRequiredSubItems(item) {
+        if (!item.require_sub_item || item.sub_items.length === 0)
+            return false
+        if (item.sub_items.length === 1) {
+            const child = buildChildItem(item, item.sub_items[0])
+            if (child.action.type === "shell_command_with_flag") {
+                startCompose(child)
+            } else if (!handleRequiredSubItems(child)) {
+                launch(child)
+            }
+            return true
+        }
+        openSubItems(item)
+        return true
+    }
+
     function launch(item) {
         if (!item)
             return
-        if (item.require_sub_item && item.sub_items.length > 0) {
-            openSubItems(item)
+        if (handleRequiredSubItems(item))
             return
-        }
         if (item.action.type === "provider_hint") {
             viewStack = []
             loadProvider(item.action.value, "")
             return
         }
         if (item.action.type === "shell_command_with_flag") {
-            composeItem = item
-            query = ""
-            status = item.action.value.prompt
-            input.forceActiveFocus()
+            startCompose(item)
             return
         }
         if (item.sub_items.length > 0) {
@@ -176,16 +268,51 @@ ShellRoot {
         runCommand(item.action.value, item.action.type === "shell_command_exit", item.provider)
     }
 
+    function composeCommand(item, value) {
+        const action = item.action.value
+        const trimmed = value.trim()
+        return trimmed.length > 0 ? `${action.command} ${action.flag_prefix}${trimmed}` : action.command
+    }
+
     function confirmInput() {
         if (!composeItem)
             return
+        if (composeItem.require_sub_item && composeItem.sub_items.length > 0) {
+            advanceCompose()
+            return
+        }
         const action = composeItem.action.value
         const provider = composeItem.provider
-        const value = query.trim()
-        const command = value.length > 0 ? `${action.command} ${action.flag_prefix}${value}` : action.command
+        const command = composeCommand(composeItem, query)
         composeItem = null
         query = ""
         runCommand(command, action.exit_after, provider)
+    }
+
+    // Chains into the composed item's own next sub_items (e.g. "type name then Space for URL step").
+    function advanceCompose() {
+        const state = composeItem
+        if (!state)
+            return
+        const command = composeCommand(state, query)
+        composeItem = null
+        query = ""
+        if (state.sub_items.length === 0) {
+            runCommand(command, state.action.value.exit_after, state.provider)
+            return
+        }
+        const parent = {
+            provider: state.provider,
+            id: `${state.id}::next`,
+            title: state.title,
+            subtitle: "Composed step",
+            info: state.info,
+            action: { type: state.action.value.exit_after ? "shell_command_exit" : "shell_command", value: command },
+            require_sub_item: true,
+            sub_items: state.sub_items
+        }
+        if (!handleRequiredSubItems(parent))
+            openSubItems(parent)
     }
 
     function runCommand(command, exitAfter, provider) {
@@ -200,6 +327,11 @@ ShellRoot {
             status = `Launched in terminal: ${command}`
             if (exitAfter)
                 Qt.quit()
+            return
+        }
+        if (exitAfter) {
+            // Fully detach into a new session so the launched app survives after Qt.quit() below.
+            actionProcess.exec(["setsid", "-f", "sh", "-c", `${command} </dev/null >/dev/null 2>&1`])
             return
         }
         actionProcess.exec(["sh", "-lc", command])
@@ -250,6 +382,18 @@ ShellRoot {
         id: terminalProcess
     }
 
+    Process {
+        id: pathFlagsProcess
+        property var pendingItem: null
+        stdout: StdioCollector {
+            onStreamFinished: root.receivePathFlags(pathFlagsProcess.pendingItem, text)
+        }
+        onExited: (exitCode, exitStatus) => {
+            if (exitCode !== 0)
+                root.status = `Path flag discovery failed (${exitCode})`
+        }
+    }
+
     PanelWindow {
         id: launcher
         anchors { top: true; bottom: true; left: true; right: true }
@@ -259,7 +403,7 @@ ShellRoot {
 
         Rectangle {
             anchors.fill: parent
-            color: "#000000b8"
+            color: Qt.rgba(Theme.colorSurface.r, Theme.colorSurface.g, Theme.colorSurface.b, Theme.overlayOpacity)
 
             MouseArea {
                 anchors.fill: parent
@@ -271,9 +415,10 @@ ShellRoot {
                 width: Math.min(980, parent.width - 48)
                 height: Math.min(610, parent.height - 48)
                 anchors.centerIn: parent
-                color: "#171717"
-                border.color: "#a3a3a3"
-                border.width: 2
+                radius: Theme.cornerRadius
+                color: Theme.colorSurface
+                border.color: Theme.colorBorder
+                border.width: Theme.borderWidth
 
                 Keys.priority: Keys.BeforeItem
                 Keys.onPressed: event => {
@@ -281,10 +426,28 @@ ShellRoot {
                         root.goBack()
                         event.accepted = true
                     } else if (event.key === Qt.Key_Down) {
-                        root.currentIndex = Math.min(root.currentIndex + 1, root.filteredItems.length - 1)
+                        if (root.infoFocused)
+                            root.scrollInfoBy(20)
+                        else
+                            root.currentIndex = Math.min(root.currentIndex + 1, root.filteredItems.length - 1)
                         event.accepted = true
                     } else if (event.key === Qt.Key_Up) {
-                        root.currentIndex = Math.max(root.currentIndex - 1, 0)
+                        if (root.infoFocused)
+                            root.scrollInfoBy(-20)
+                        else
+                            root.currentIndex = Math.max(root.currentIndex - 1, 0)
+                        event.accepted = true
+                    } else if (event.key === Qt.Key_PageDown && root.infoFocused) {
+                        root.scrollInfoBy(160)
+                        event.accepted = true
+                    } else if (event.key === Qt.Key_PageUp && root.infoFocused) {
+                        root.scrollInfoBy(-160)
+                        event.accepted = true
+                    } else if (event.key === Qt.Key_Home && root.infoFocused) {
+                        infoFlickable.contentY = 0
+                        event.accepted = true
+                    } else if (event.key === Qt.Key_End && root.infoFocused) {
+                        infoFlickable.contentY = Math.max(0, infoFlickable.contentHeight - infoFlickable.height)
                         event.accepted = true
                     } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
                         if (root.composeItem)
@@ -297,94 +460,159 @@ ShellRoot {
 
                 ColumnLayout {
                     anchors.fill: parent
-                    anchors.margins: 24
-                    spacing: 16
+                    anchors.margins: Theme.outerMargin
+                    spacing: Theme.panelSpacing
 
                     TextField {
                         id: input
                         Layout.fillWidth: true
-                        Layout.preferredHeight: 52
+                        implicitHeight: contentHeight + 2 * Theme.itemPadding
+                        padding: Theme.itemPadding
                         focus: true
                         text: root.query
                         placeholderText: root.composeItem ? root.composeItem.action.value.prompt : "Search providers and actions"
-                        font.family: "JetBrains Mono"
-                        font.pixelSize: 18
-                        color: "#f5f5f5"
+                        font.family: Theme.fontFamily
+                        font.pixelSize: Theme.fontSize
+                        color: Theme.colorTextPrimary
                         selectByMouse: true
                         onTextEdited: {
                             root.query = text
                             root.currentIndex = 0
                         }
+                        Keys.priority: Keys.BeforeItem
+                        Keys.onPressed: event => {
+                            if (event.key === Qt.Key_Tab || event.key === Qt.Key_Backtab) {
+                                root.toggleFocus()
+                                event.accepted = true
+                                return
+                            }
+                            if (event.key !== Qt.Key_Space)
+                                return
+                            if (root.composeItem) {
+                                if (root.composeItem.sub_items.length > 0) {
+                                    root.advanceCompose()
+                                    event.accepted = true
+                                }
+                                return
+                            }
+                            const selected = root.selectedItem()
+                            if (selected && selected.sub_items.length > 0) {
+                                root.openSubItems(selected)
+                                event.accepted = true
+                            } else if (selected && selected.provider === "path-launcher") {
+                                root.discoverPathFlags(selected)
+                                event.accepted = true
+                            }
+                        }
                         background: Rectangle {
-                            color: "#262626"
-                            border.width: 2
-                            border.color: input.activeFocus ? "#f5f5f5" : "#737373"
+                            radius: Theme.cornerRadius
+                            color: Theme.colorPanel
                         }
                     }
 
                     RowLayout {
                         Layout.fillWidth: true
                         Layout.fillHeight: true
-                        spacing: 20
+                        spacing: Theme.panelSpacing
 
-                        ListView {
-                            id: list
+                        ColumnLayout {
                             Layout.preferredWidth: surface.width * 0.54
                             Layout.fillHeight: true
-                            clip: true
-                            model: root.filteredItems
-                            currentIndex: root.currentIndex
-                            onCurrentIndexChanged: root.currentIndex = currentIndex
-                            delegate: ItemDelegate {
-                                required property int index
-                                required property var modelData
-                                width: list.width
-                                height: 58
-                                highlighted: index === root.currentIndex
-                                text: modelData.title
-                                font.family: "JetBrains Mono"
-                                font.pixelSize: 16
-                                onClicked: {
-                                    root.currentIndex = index
-                                    root.launch(modelData)
-                                }
-                                contentItem: Column {
-                                    spacing: 3
-                                    Text { text: modelData.title; font: parent.parent.font; color: "#f5f5f5"; elide: Text.ElideRight; width: parent.width }
-                                    Text { text: modelData.subtitle; font.family: "JetBrains Mono"; font.pixelSize: 12; color: "#a3a3a3"; elide: Text.ElideRight; width: parent.width }
-                                }
-                                background: Rectangle {
-                                    color: parent.highlighted ? "#404040" : "transparent"
-                                }
+                            spacing: 4
+
+                            Text {
+                                text: root.infoFocused ? "Results" : "Results [Focus]"
+                                font.family: Theme.fontFamily
+                                font.pixelSize: Theme.fontSize
+                                font.bold: !root.infoFocused
+                                color: root.infoFocused ? Theme.colorTextSecondary : Theme.colorTextPrimary
                             }
-                            ScrollBar.vertical: ScrollBar { }
+
+                            ListView {
+                                id: list
+                                Layout.fillWidth: true
+                                Layout.fillHeight: true
+                                clip: true
+                                model: root.filteredItems
+                                currentIndex: root.currentIndex
+                                onCurrentIndexChanged: root.currentIndex = currentIndex
+                                delegate: ItemDelegate {
+                                    required property int index
+                                    required property var modelData
+                                    width: list.width
+                                    padding: Theme.itemPadding
+                                    highlighted: index === root.currentIndex
+                                    text: modelData.title
+                                    font.family: Theme.fontFamily
+                                    font.pixelSize: Theme.fontSize
+                                    onClicked: {
+                                        root.currentIndex = index
+                                        root.launch(modelData)
+                                    }
+                                    contentItem: Column {
+                                        spacing: 1
+                                        Text { text: modelData.title; font: parent.parent.font; color: Theme.colorTextPrimary; elide: Text.ElideRight; width: parent.width }
+                                        Text { text: modelData.subtitle; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize; color: Theme.colorTextSecondary; elide: Text.ElideRight; width: parent.width }
+                                    }
+                                    background: Rectangle {
+                                        radius: Theme.cornerRadius
+                                        color: parent.highlighted ? Theme.colorHighlight : "transparent"
+                                    }
+                                }
+                                ScrollBar.vertical: ScrollBar { }
+                            }
                         }
 
-                        Rectangle {
+                        ColumnLayout {
                             Layout.preferredWidth: surface.width * 0.38
                             Layout.fillHeight: true
-                            color: "#262626"
-                            border.color: "#737373"
+                            spacing: 4
 
-                            Flickable {
-                                anchors.fill: parent
-                                anchors.margins: 18
-                                contentWidth: width
-                                contentHeight: details.implicitHeight
-                                clip: true
+                            Text {
+                                text: root.infoFocused ? "Info [Focus]" : "Info"
+                                font.family: Theme.fontFamily
+                                font.pixelSize: Theme.fontSize
+                                font.bold: root.infoFocused
+                                color: root.infoFocused ? Theme.colorTextPrimary : Theme.colorTextSecondary
+                            }
 
-                                Column {
-                                    id: details
-                                    width: parent.width
-                                    spacing: 12
-                                    property var selected: root.selectedItem()
-                                    Text { text: details.selected ? details.selected.title : "No selection"; width: parent.width; wrapMode: Text.Wrap; font.family: "JetBrains Mono"; font.pixelSize: 19; font.bold: true; color: "#f5f5f5" }
-                                    Text { text: details.selected ? details.selected.provider : ""; width: parent.width; wrapMode: Text.Wrap; font.family: "JetBrains Mono"; font.pixelSize: 12; color: "#d4d4d4" }
-                                    Rectangle { width: parent.width; height: 1; color: "#737373" }
-                                    Text { text: details.selected ? details.selected.info.summary : ""; width: parent.width; wrapMode: Text.Wrap; font.family: "JetBrains Mono"; font.pixelSize: 14; color: "#d4d4d4" }
-                                    Repeater {
-                                        model: details.selected ? details.selected.info.fields : []
-                                        delegate: Text { required property var modelData; text: `${modelData.label}: ${modelData.value}`; width: parent.width; wrapMode: Text.Wrap; font.family: "JetBrains Mono"; font.pixelSize: 12; color: "#a3a3a3" }
+                            Rectangle {
+                                Layout.fillWidth: true
+                                Layout.fillHeight: true
+                                radius: Theme.cornerRadius
+                                color: Theme.colorPanel
+
+                                Flickable {
+                                    id: infoFlickable
+                                    anchors.fill: parent
+                                    anchors.margins: Theme.panelPadding
+                                    contentWidth: width
+                                    contentHeight: details.implicitHeight
+                                    clip: true
+
+                                    Column {
+                                        id: details
+                                        width: parent.width
+                                        spacing: 12
+                                        property var selected: root.selectedItem()
+                                        Text {
+                                            visible: root.status.startsWith("Warning:")
+                                            text: root.status
+                                            width: parent.width
+                                            wrapMode: Text.Wrap
+                                            font.family: Theme.fontFamily
+                                            font.pixelSize: Theme.fontSize
+                                            font.bold: true
+                                            color: Theme.colorWarning
+                                        }
+                                        Text { text: details.selected ? details.selected.title : "No selection"; width: parent.width; wrapMode: Text.Wrap; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize; font.bold: true; color: Theme.colorTextPrimary }
+                                        Text { text: details.selected ? details.selected.provider : ""; width: parent.width; wrapMode: Text.Wrap; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize; color: Theme.colorTextTertiary }
+                                        Rectangle { width: parent.width; height: 1; color: Theme.colorTextMuted }
+                                        Text { text: details.selected ? details.selected.info.summary : ""; width: parent.width; wrapMode: Text.Wrap; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize; color: Theme.colorTextTertiary }
+                                        Repeater {
+                                            model: details.selected ? details.selected.info.fields : []
+                                            delegate: Text { required property var modelData; text: `${modelData.label}: ${modelData.value}`; width: parent.width; wrapMode: Text.Wrap; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize; color: Theme.colorTextSecondary }
+                                        }
                                     }
                                 }
                             }
@@ -394,9 +622,18 @@ ShellRoot {
                     Text {
                         Layout.fillWidth: true
                         text: root.status
-                        font.family: "JetBrains Mono"
-                        font.pixelSize: 12
+                        font.family: Theme.fontFamily
+                        font.pixelSize: Theme.fontSize
                         color: root.statusColor(root.status)
+                        elide: Text.ElideRight
+                    }
+
+                    Text {
+                        Layout.fillWidth: true
+                        text: root.controlsHint()
+                        font.family: Theme.fontFamily
+                        font.pixelSize: Theme.fontSize
+                        color: Theme.colorTextMuted
                         elide: Text.ElideRight
                     }
                 }
@@ -404,5 +641,5 @@ ShellRoot {
         }
     }
 
-    Component.onCompleted: loadProvider("", "")
+    Component.onCompleted: loadInitial()
 }

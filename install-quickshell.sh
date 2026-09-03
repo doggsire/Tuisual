@@ -35,10 +35,24 @@ fi
 install -d "$CONFIG_DIR"
 "${SUDO_CMD[@]}" install -d "$BIN_DIR"
 install -m 644 "$SCRIPT_DIR/quickshell/shell.qml" "$CONFIG_DIR/shell.qml"
+install -m 644 "$SCRIPT_DIR/quickshell/Theme.qml" "$CONFIG_DIR/Theme.qml"
 
 WRAPPER_TMP="$(mktemp)"
 cat > "$WRAPPER_TMP" <<EOF
 #!/usr/bin/env bash
+for arg in "\$@"; do
+  if [[ "\$arg" == "-h" || "\$arg" == "--help" ]]; then
+    echo "tuisual-qs: launch the QuickShell frontend for Tuisual."
+    echo
+    echo "Usage:"
+    echo "  tuisual-qs                Show provider catalog"
+    echo "  tuisual-qs [flags]        Load items from matching providers (forwarded to 'tuisual --json')"
+    echo "  tuisual-qs -h, --help     Show this help page"
+    echo
+    exec tuisual -h
+  fi
+done
+export TUISUAL_QS_ARGS="\$*"
 exec qs -p "$CONFIG_DIR"
 EOF
 "${SUDO_CMD[@]}" install -m 755 "$WRAPPER_TMP" "$BIN_DIR/tuisual-qs"
