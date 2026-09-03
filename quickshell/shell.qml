@@ -21,6 +21,21 @@ ShellRoot {
     property string terminalEmulator: "alacritty"
     property var terminalProviders: ["arch-updates", "installer"]
     property var filteredItems: filterItems(items, query)
+    // Mirrors ui.rs's render_results compose-mode overlay so the list doesn't keep showing stale sub-items while typing a flag value.
+    property var composeDisplayItems: {
+        if (!composeItem)
+            return []
+        const stateLine = (composeItem.require_sub_item && composeItem.sub_items.length > 0)
+            ? "Required chain: Enter or Space continues"
+            : (composeItem.sub_items.length > 0
+                ? "Optional chain: Enter launches, Space continues"
+                : "Final step: Enter launches")
+        return [
+            { title: "Input Mode", subtitle: composeItem.title },
+            { title: `Prompt: ${composeItem.action.value.prompt}`, subtitle: "" },
+            { title: stateLine, subtitle: "" }
+        ]
+    }
 
     function score(queryLower, candidateLower, candidateLength) {
         if (queryLower.length === 0)
@@ -573,19 +588,25 @@ ShellRoot {
                                 Layout.fillWidth: true
                                 Layout.fillHeight: true
                                 clip: true
-                                model: root.filteredItems
-                                currentIndex: root.currentIndex
-                                onCurrentIndexChanged: root.currentIndex = currentIndex
+                                model: root.composeItem ? root.composeDisplayItems : root.filteredItems
+                                currentIndex: root.composeItem ? -1 : root.currentIndex
+                                onCurrentIndexChanged: {
+                                    if (!root.composeItem)
+                                        root.currentIndex = currentIndex
+                                }
                                 delegate: ItemDelegate {
                                     required property int index
                                     required property var modelData
                                     width: list.width
                                     padding: Theme.itemPadding
-                                    highlighted: index === root.currentIndex
+                                    highlighted: !root.composeItem && index === root.currentIndex
                                     text: modelData.title
                                     font.family: Theme.fontFamily
                                     font.pixelSize: Theme.fontSize
+                                    enabled: !root.composeItem
                                     onClicked: {
+                                        if (root.composeItem)
+                                            return
                                         root.currentIndex = index
                                         root.launch(modelData)
                                     }
