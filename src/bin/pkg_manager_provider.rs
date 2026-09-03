@@ -8,6 +8,16 @@ use std::thread;
 use std::time::Instant;
 use std::time::SystemTime;
 
+// This provider builds a searchable list of installable and installed packages.
+// It talks to pacman, AUR tools, and flatpak, then turns them into friendly menu items.
+//
+// The important idea here is: this file does not launch packages directly.
+// It discovers package data, caches it, filters it by the current query, and emits JSON
+// that Tuisual can show to the user and use to build install or uninstall commands.
+//
+// In plain English: we are not just listing packages. We are collecting data from system package
+// managers, remembering the results for a little while, and then turning that information into menu
+// items the user can click to install or remove software.
 const PACMAN_REPO_CACHE_KEY: &str = "pacman_slq";
 const FLATPAK_REMOTE_CACHE_KEY: &str = "flatpak_remote_ls";
 const PACMAN_INSTALLED_CACHE_KEY: &str = "pacman_qq";
@@ -80,10 +90,12 @@ struct AvailableItem {
 }
 
 fn is_false(v: &bool) -> bool {
+    // Serde uses this predicate to omit false boolean fields from the JSON output.
     !v
 }
 
 fn slugify(text: &str) -> String {
+    // Build a lowercase ID by keeping letters/digits and collapsing punctuation into dashes.
     let mut slug = String::with_capacity(text.len());
     let mut last_dash = false;
     for ch in text.chars() {
@@ -91,6 +103,7 @@ fn slugify(text: &str) -> String {
             slug.push(ch.to_ascii_lowercase());
             last_dash = false;
         } else if !last_dash && !slug.is_empty() {
+            // Avoid a leading dash and avoid repeating dashes for adjacent punctuation.
             slug.push('-');
             last_dash = true;
         }
@@ -99,9 +112,16 @@ fn slugify(text: &str) -> String {
 }
 
 fn shell_quote(value: &str) -> String {
+    // Escape single quotes using the shell pattern `'\''`, then surround the whole
+    // value with quotes so package names remain one shell argument.
     format!("'{}'", value.replace('\'', "'\\''"))
 }
 
+// The app can pass a search query in the environment.
+// If the user is typing a package name, this helps filter the result list.
+//
+// This query usually comes from the main Tuisual app while the user is typing in the search box.
+// The provider listens for it and reuses it to narrow package results.
 fn provider_query() -> Option<String> {
     env::var("TUISUAL_PROVIDER_QUERY")
         .ok()
@@ -109,18 +129,28 @@ fn provider_query() -> Option<String> {
         .filter(|query| !query.is_empty())
 }
 
+// A candidate matches if any candidate value contains the current query.
+// Example: query = "fire" and candidates = ["firefox", "vlc"] => firefox matches.
+//
+// This is the filter step. Without this, the provider would dump every package and the search box
+// would be useless. With this, the user can type a few letters and instantly narrow the results.
 fn matches_query(query: Option<&str>, candidates: &[&str]) -> bool {
+    // No query means the caller is building the complete list, so every candidate passes.
     let Some(query) = query else {
         return true;
     };
 
+    // Lowercase each candidate and accept the item when at least one searchable value
+    // contains the already-lowercase query.
     candidates
         .iter()
         .map(|candidate| candidate.to_ascii_lowercase())
         .any(|candidate| candidate.contains(query))
 }
 
+// Optional debug mode: if enabled, each provider prints timing info to stderr.
 fn timing_enabled() -> bool {
+    // Accept several familiar true spellings so shell environment configuration is forgiving.
     env::var("TUISUAL_PROVIDER_TIMING")
         .map(|value| {
             let lowered = value.to_ascii_lowercase();
@@ -129,7 +159,9 @@ fn timing_enabled() -> bool {
         .unwrap_or(false)
 }
 
+// Turn caching off if the environment says so.
 fn cache_disabled() -> bool {
+    // Use the same environment parsing convention for the cache switch.
     env::var("TUISUAL_PROVIDER_DISABLE_CACHE")
         .map(|value| {
             let lowered = value.to_ascii_lowercase();
@@ -139,39 +171,59 @@ fn cache_disabled() -> bool {
 }
 
 fn read_ttl_env(var: &str, default: u64) -> u64 {
+    // Read a positive integer override; malformed or missing values use the supplied default.
     env::var(var)
         .ok()
         .and_then(|value| value.trim().parse::<u64>().ok())
         .unwrap_or(default)
 }
 
+// Pick the folder where the provider stores cached data.
+// Usually this is ~/.cache/tuisual or $XDG_CACHE_HOME/tuisual.
+//
+// This is the place where the provider saves recent package lists so it does not need to run the
+// slow system commands again and again while the user is typing.
 fn cache_root() -> Option<PathBuf> {
+    // Returning None is the signal used by cache readers and writers to bypass disk caching.
     if cache_disabled() {
         return None;
     }
 
     if let Ok(root) = env::var("XDG_CACHE_HOME") {
+		// Prefer the standard per-user cache location when it is configured.
         let trimmed = root.trim();
         if !trimmed.is_empty() {
             return Some(PathBuf::from(trimmed).join("tuisual"));
         }
     }
 
+    // Fall back to the conventional `.cache` directory below HOME.
     env::var("HOME")
         .ok()
         .map(|home| PathBuf::from(home).join(".cache").join("tuisual"))
 }
 
+// Read cached command output if it is still fresh enough.
+// This makes the provider much faster when the user is typing queries repeatedly.
+//
+// Step by step:
+// 1. find the cache file for this command result
+// 2. check when it was last modified
+// 3. if its age is still below the time limit, reuse it
+// 4. otherwise, throw it away and refresh it from the real command
 fn read_cached_lines(cache_key: &str, max_age_secs: u64) -> Option<Vec<String>> {
+    // Build the cache filename, then return None at the first unavailable or stale step.
     let root = cache_root()?;
     let path = root.join(format!("{}.txt", cache_key));
     let metadata = fs::metadata(&path).ok()?;
     let modified = metadata.modified().ok()?;
+    // Compare the file's modification time with now and convert the age to seconds.
     let age = SystemTime::now().duration_since(modified).ok()?.as_secs();
     if age > max_age_secs {
         return None;
     }
 
+    // Read the cached text and turn each non-empty line into one owned result string.
     let content = fs::read_to_string(path).ok()?;
     let lines = content
         .lines()
@@ -192,16 +244,22 @@ fn read_cached_lines(cache_key: &str, max_age_secs: u64) -> Option<Vec<String>> 
     Some(lines)
 }
 
+// Save command output to disk so future calls can reuse it without running expensive commands again.
+//
+// This is the write-side of the cache: we store the package list as a plain text file and come back
+// later when the same query or package list is needed again.
 fn write_cached_lines(cache_key: &str, lines: &[String]) {
     let Some(root) = cache_root() else {
         return;
     };
 
+    // Create the cache directory on first use. A failed directory creation disables this write.
     if fs::create_dir_all(&root).is_err() {
         return;
     }
 
     let path = root.join(format!("{}.txt", cache_key));
+    // Keep one command result per line and add a final newline for normal text-file formatting.
     let payload = if lines.is_empty() {
         String::new()
     } else {
@@ -211,7 +269,10 @@ fn write_cached_lines(cache_key: &str, lines: &[String]) {
     let _ = fs::write(path, payload);
 }
 
+// Reusable wrapper: try cache first, then run the command only if needed.
+// This is the main performance trick in the file.
 fn run_lines_cached(cmd: &str, args: &[&str], cache_key: &str, ttl_secs: u64) -> Vec<String> {
+    // Return fresh cached data immediately; otherwise run the command and save its output.
     if let Some(lines) = read_cached_lines(cache_key, ttl_secs) {
         return lines;
     }
@@ -221,10 +282,17 @@ fn run_lines_cached(cmd: &str, args: &[&str], cache_key: &str, ttl_secs: u64) ->
     lines
 }
 
+// Run a command and capture standard output as lines.
+// This is the basic building block for reading package data from pacman, flatpak, etc.
+//
+// We take the output of a command and turn it into a list of strings, one line per item. That makes
+// it easy to treat package names or app IDs as rows of data that can be filtered, sorted, and merged.
 fn run_lines(cmd: &str, args: &[&str]) -> Vec<String> {
+    // Start the timer only when timing output is enabled so normal provider runs do no extra work.
     let timing = timing_enabled();
     let started = if timing { Some(Instant::now()) } else { None };
 
+    // Capture stdout and the exit status. A spawn failure produces an empty result list.
     let Ok(output) = Command::new(cmd).args(args).output() else {
         if let Some(started) = started {
             eprintln!(
@@ -237,6 +305,7 @@ fn run_lines(cmd: &str, args: &[&str]) -> Vec<String> {
         return Vec::new();
     };
 
+    // Decode stdout lossily, split it into lines, trim each line, and remove blank results.
     let lines = String::from_utf8_lossy(&output.stdout)
         .lines()
         .map(str::trim)
@@ -258,7 +327,14 @@ fn run_lines(cmd: &str, args: &[&str]) -> Vec<String> {
     lines
 }
 
+// Read the names of all installed packages from pacman.
+// Also include AUR names because AUR packages are often installed through pacman too.
+//
+// This tells the app which packages are already installed so it can show the correct status and choose
+// whether an item should be shown as "install" or "uninstall".
 fn installed_pacman_names(aur_names: &[String]) -> HashSet<String> {
+    // Start with packages reported by pacman, then add AUR names because pacman also
+    // records those installed packages in its local database.
     let mut names = HashSet::new();
     for item in run_lines_cached(
         "pacman",
@@ -275,6 +351,7 @@ fn installed_pacman_names(aur_names: &[String]) -> HashSet<String> {
 }
 
 fn installed_aur_names() -> Vec<String> {
+    // Read cached AUR package names, then sort and deduplicate for stable downstream iteration.
     let mut names = run_lines_cached(
         "pacman",
         &["-Qmq"],
@@ -287,6 +364,7 @@ fn installed_aur_names() -> Vec<String> {
 }
 
 fn installed_flatpak_ids() -> HashSet<String> {
+    // Flatpak identifies installed apps by application ID, so store those IDs in a set.
     let mut ids = HashSet::new();
     for item in run_lines_cached(
         "flatpak",
@@ -299,6 +377,11 @@ fn installed_flatpak_ids() -> HashSet<String> {
     ids
 }
 
+// Build the list of package names available in the official Arch repositories.
+// We filter by the search query and keep track of whether each package is already installed.
+//
+// This is one of the main output builders. It reads the list of repo packages, checks if the package
+// is installed, and prepares the install/uninstall commands for the menu item.
 fn pacman_repo_items(installed: &HashSet<String>, query: Option<&str>) -> Vec<AvailableItem> {
     let mut result = Vec::new();
     let mut names = run_lines_cached(
@@ -307,15 +390,18 @@ fn pacman_repo_items(installed: &HashSet<String>, query: Option<&str>) -> Vec<Av
         PACMAN_REPO_CACHE_KEY,
         read_ttl_env("TUISUAL_PACMAN_REPO_CACHE_TTL_SECS", PACMAN_REPO_CACHE_TTL_SECS),
     );
+    // Sort and deduplicate raw command output before building menu records.
     names.sort();
     names.dedup();
 
     for name in names {
+        // Skip packages that do not contain the user's query.
         if !matches_query(query, &[name.as_str()]) {
             continue;
         }
 
         let key = format!("pacman:{}", name);
+        // The same package name gets different actions depending on installed state.
         let installed_here = installed.contains(&name);
         let install_command = format!("sudo pacman -S --needed {}", shell_quote(&name));
         let uninstall_command = format!("sudo pacman -R --noconfirm {}", shell_quote(&name));
@@ -336,6 +422,7 @@ fn aur_installed_items(aur_names: &[String], query: Option<&str>) -> Vec<Availab
     let mut result = Vec::new();
 
     for name in aur_names {
+        // AUR names come from the installed list, so every accepted item is installed.
         if !matches_query(query, &[name.as_str()]) {
             continue;
         }
@@ -356,6 +443,11 @@ fn aur_installed_items(aur_names: &[String], query: Option<&str>) -> Vec<Availab
     result
 }
 
+// Build the list of available flatpak apps from configured remotes.
+// Each flatpak app can be searched by its app ID or its display name.
+//
+// Flatpak works a bit differently from pacman, but the idea is the same: gather app metadata, check
+// if it is installed, and create a menu item that knows how to install or uninstall it.
 fn flatpak_items(installed: &HashSet<String>, query: Option<&str>) -> Vec<AvailableItem> {
     let mut result = Vec::new();
     let mut seen = HashSet::new();
@@ -370,12 +462,15 @@ fn flatpak_items(installed: &HashSet<String>, query: Option<&str>) -> Vec<Availa
     );
 
     for line in lines {
+        // Flatpak prints the application ID and display name separated by a tab.
         let mut parts = line.splitn(2, '\t');
         let app_id = match parts.next() {
             Some(v) if !v.trim().is_empty() => v.trim().to_string(),
             _ => continue,
         };
+        // If no display name was printed, use the application ID as the fallback title.
         let display_name = parts.next().map(str::trim).unwrap_or(&app_id).to_string();
+        // Ignore malformed rows and duplicate IDs before checking the query.
         if display_name.trim().is_empty() || !seen.insert(app_id.clone()) {
             continue;
         }
@@ -384,6 +479,7 @@ fn flatpak_items(installed: &HashSet<String>, query: Option<&str>) -> Vec<Availa
             continue;
         }
 
+        // Choose install/uninstall state from the installed-ID set.
         let installed_here = installed.contains(&app_id);
         let key = format!("flatpak:{}", app_id);
         let title = if display_name.is_empty() { app_id.clone() } else { display_name };
@@ -402,10 +498,18 @@ fn flatpak_items(installed: &HashSet<String>, query: Option<&str>) -> Vec<Availa
     result
 }
 
+// This is the main assembly step.
+// It gathers package information from pacman, AUR, and flatpak, merges them together,
+// and then converts them into ProviderItem values that Tuisual can display.
+//
+// This is the big combine step where all the package data finally becomes menu items.
+// We gather all the source lists, map them by key, and then produce one list of user-visible results.
 fn build_available_items() -> Vec<ProviderItem> {
+    // Read the query once so every source applies the same filter.
     let timing = timing_enabled();
     let query = provider_query();
 
+    // Load the installed sets before starting source-specific enumeration.
     let aur_started = Instant::now();
     let aur_names = installed_aur_names();
     if timing {
@@ -441,6 +545,7 @@ fn build_available_items() -> Vec<ProviderItem> {
     let pacman_query = query.clone();
     let flatpak_query = query.clone();
 
+    // Pacman and Flatpak are independent external commands, so run them concurrently.
     let pacman_repo_handle = thread::spawn(move || {
         let started = Instant::now();
         let items = pacman_repo_items(&pacman_installed_for_thread, pacman_query.as_deref());
@@ -453,18 +558,22 @@ fn build_available_items() -> Vec<ProviderItem> {
         (items, started.elapsed().as_millis())
     });
 
+    // AUR items use the already-loaded local AUR names and can be built on this thread.
     let aur_items_started = Instant::now();
     let aur_items = aur_installed_items(&aur_names, query.as_deref());
     let aur_items_elapsed_ms = aur_items_started.elapsed().as_millis();
 
+    // Join both workers before merging. A worker panic becomes an empty result via the default tuple.
     let (pacman_items, pacman_elapsed_ms) = pacman_repo_handle.join().unwrap_or_default();
 
     let (flatpak_items_result, flatpak_elapsed_ms) =
         flatpak_items_handle.join().unwrap_or_default();
 
+    // Key by source-qualified ID so similarly named packages from different ecosystems coexist.
     let mut map: HashMap<String, AvailableItem> = HashMap::new();
 
     for item in pacman_items {
+        // Insert each source result; the qualified key prevents accidental collisions.
         map.insert(item.key.clone(), item);
     }
     if timing {
@@ -497,9 +606,11 @@ fn build_available_items() -> Vec<ProviderItem> {
         );
     }
 
+    // Convert internal AvailableItems into the public provider schema.
     let mut items: Vec<ProviderItem> = map
         .into_values()
         .map(|item| {
+			// Select display text, status, and command from the installed flag.
             let title = if item.installed {
                 format!("{} [installed]", item.title)
             } else {
@@ -556,6 +667,7 @@ fn build_available_items() -> Vec<ProviderItem> {
         })
         .collect();
 
+    // Sort final titles case-insensitively for predictable search results.
     items.sort_by_cached_key(|a| a.title.to_ascii_lowercase());
 
     let install_aur = ProviderItem {
@@ -587,11 +699,13 @@ fn build_available_items() -> Vec<ProviderItem> {
         }],
     };
 
+    // Put the manual AUR fallback first so it remains available even when enumeration finds nothing.
     items.insert(0, install_aur);
     items
 }
 
 fn main() {
+    // Require provider mode so direct execution does not produce JSON unexpectedly.
     if env::var_os("TUISUAL_PROVIDER_MODE").is_none() {
         eprintln!(
             "This is a Tuisual provider helper. Run the app via 'tuisual --installer' or 'cargo run --bin tuisual -- --installer'."
@@ -602,6 +716,7 @@ fn main() {
     let timing = timing_enabled();
     let total_started = Instant::now();
 
+    // Build all package actions, optionally report timing, and serialize the result for Tuisual.
     let items = build_available_items();
     if timing {
         eprintln!(

@@ -49,6 +49,10 @@ pub enum PaneFocus {
     Info,
 }
 
+// This is the brain of the app.
+// It keeps track of the typed query, the currently selected result,
+// the list of items loaded from providers, and whether the user is in a
+// special "compose a command" mode.
 #[derive(Debug)]
 pub struct AppState {
     pub input: String,
@@ -70,6 +74,9 @@ pub struct AppState {
 }
 
 impl AppState {
+    // Build a fresh app state from the items that were loaded.
+    // If the app is showing only installer items, the list is kept hidden until
+    // the user starts typing a package name.
     pub fn new(items: Vec<AppItem>, rejected_items: usize) -> Self {
         let is_installer_only = !items.is_empty() && items.iter().all(|item| item.provider == "installer");
         let ranked = if is_installer_only {
@@ -105,6 +112,17 @@ impl AppState {
         }
     }
 
+    // This is the main key handler.
+    // It is the biggest decision point in the app.
+    //
+    // Think of it like a classroom bell system:
+    // - if the user is in "compose mode", we do a different set of rules
+    // - if the user is typing in the search box, letters add text
+    // - if the user presses Enter, the selected item launches
+    // - if the user presses Tab, focus moves between the results and info panels
+    // - if the user presses Space, the app may open a sub-menu or start a command builder
+    //
+    // This function decides which behavior should happen for every key press.
     pub fn handle_key(&mut self, key: KeyEvent) {
         if self.compose_state.is_some() {
             self.handle_compose_key(key);
@@ -201,6 +219,17 @@ impl AppState {
         }
     }
 
+    // This is the special key handler used while the user is typing a command value.
+    //
+    // Example: the user picks a command like "apt install" and then the app asks for
+    // a package name. While that prompt is open, the search box is not "searching" the
+    // item list anymore. Instead, it is collecting one piece of text to finish the command.
+    //
+    // So this function uses a different rule set:
+    // - Enter often confirms the final command
+    // - Space may continue a chain of sub-choices
+    // - Esc cancels the command building
+    // - Backspace and arrow keys still move around the current typed text
     fn handle_compose_key(&mut self, key: KeyEvent) {
         match key.code {
             KeyCode::Esc => {
@@ -457,6 +486,16 @@ impl AppState {
         self.info_scroll = 0;
     }
 
+    // Re-sort the results every time the user types or deletes a character.
+    // This is the moment when the UI decides which item looks most like the query.
+    //
+    // The search algorithm uses the `matcher` module to give every item a score.
+    // Example: if the query is "git", then items whose title starts with "git"
+    // get a much bigger score than a random item whose title only contains the letters
+    // later in the string.
+    //
+    // This method also updates the status text so the user sees messages like
+    // "No matches" or "3 matches".
     fn recompute_rankings(&mut self) {
         if self.input.is_empty() && self.is_installer_only() {
             self.ranked.clear();
@@ -494,6 +533,13 @@ impl AppState {
         }
     }
 
+    // This method is the "wait a tiny bit before asking the installer provider for new data" step.
+    //
+    // Why this matters:
+    // 1. the user may type several letters quickly
+    // 2. we do not want to reload the package list after every single key press
+    // 3. so we save the current query and set a short future time to run the lookup
+    // 4. when that time arrives, the app fetches fresh package results once
     fn schedule_installer_lookup(&mut self) {
         if !self.is_installer_only() {
             self.pending_installer_lookup = None;
@@ -516,6 +562,14 @@ impl AppState {
         });
     }
 
+    // This is the moment when the delayed package search finally fires.
+    //
+    // Step by step:
+    // 1. check whether the timer has reached its deadline
+    // 2. if not, do nothing
+    // 3. if yes, take the saved lookup request out of the queue
+    // 4. make sure the user is still typing the same query
+    // 5. if the lookup has not already run for that exact query, fetch new results
     fn process_debounced_installer_lookup(&mut self) {
         let should_run = self
             .pending_installer_lookup
@@ -541,6 +595,11 @@ impl AppState {
         self.lookup_installer_query(&pending.query);
     }
 
+    // This is the manual override for the installer search.
+    //
+    // Imagine the user presses Enter before the usual debounce timer finishes.
+    // We still want the package list to refresh immediately for that query, so this method forces the
+    // lookup to run right away if the user is in the installer-only mode and has typed enough text.
     fn try_force_installer_lookup(&mut self) -> bool {
         if !self.is_installer_only() {
             return false;
@@ -560,6 +619,14 @@ impl AppState {
         true
     }
 
+    // For the installer provider, the app does a delayed search.
+    // This lets the user type a few letters before asking the provider for a new list
+    // of package results, instead of reloading every single keystroke.
+    //
+    // Why is this useful? If the user types "fire" and the app asks the installer
+    // provider after every letter, it might do too much work and feel jumpy.
+    // Instead, the app waits a tiny bit, then refreshes the package list once the user
+    // seems to be done typing.
     fn lookup_installer_query(&mut self, query: &str) {
         let args = vec!["--installer".to_string()];
         let previous = env::var_os("TUISUAL_PROVIDER_QUERY");
@@ -585,6 +652,11 @@ impl AppState {
         self.recompute_rankings();
     }
 
+    // When the user presses Enter, this method turns the selected item into an action.
+    // It may open a nested menu, start a prompt, or launch a shell command.
+    //
+    // This is the "do the thing" step. The item is already chosen and ranked, and now
+    // we decide what that choice means in the real world.
     fn launch_selected(&mut self) {
         let Some(item) = self.selected_item().cloned() else {
             self.status = "No item selected".to_string();
@@ -598,6 +670,12 @@ impl AppState {
         self.launch_item(item);
     }
 
+    // This turns an AppItem into a real action.
+    // A plain command runs immediately, a "with flag" action opens a small typing prompt,
+    // and a provider hint tells the app to load a different provider.
+    //
+    // In other words: the list is only a menu. Every menu item has a destination.
+    // This function performs that destination.
     fn launch_item(&mut self, item: AppItem) {
         match item.action {
             ItemAction::ShellCommand(command) => {
@@ -629,6 +707,12 @@ impl AppState {
         }
     }
 
+    // Some actions are not complete until the user picks one more step.
+    // Example: a command might need a specific flag, or a package manager might require
+    // a sub-selection before it can run.
+    //
+    // This function checks whether the chosen item has a required "next step" and then
+    // either opens that next menu or starts the command prompt immediately.
     fn handle_required_sub_items(&mut self, item: AppItem) -> bool {
         if !item.require_sub_item || item.sub_items.is_empty() {
             return false;
@@ -684,6 +768,13 @@ impl AppState {
         true
     }
 
+    // "Compose mode" is used when a command needs extra text from the user,
+    // such as a package name or a flag value. The app temporarily swaps the
+    // normal search input for a one-line command builder.
+    //
+    // We save the previous query and cursor so the app can restore the search box
+    // after the command is built. This lets the user go back to their original search
+    // after finishing the extra input step.
     fn start_compose_mode(
         &mut self,
         config: ShellCommandWithFlag,
@@ -823,6 +914,11 @@ impl AppState {
         }
     }
 
+    // This is the "open the next menu layer" step.
+    //
+    // If the selected item has child options, then the user is not finished yet. We open a temporary
+    // submenu so they can pick one more action before the final command is launched.
+    // For path-launcher items, we may discover flag choices dynamically at this moment and build them on the fly.
     fn try_open_sub_items_view(&mut self) -> bool {
         let Some(parent) = self.selected_item().cloned() else {
             return false;
@@ -853,6 +949,19 @@ impl AppState {
         self.open_sub_items_for_parent(parent)
     }
 
+    // A parent item can have child choices. This method turns those children into a
+    // temporary new list so the user can pick one more step before launching the final command.
+    //
+    // The app saves the old list in `view_stack`, switches to the child list, and then
+    // later returns to the old one when the user hits Esc.
+    // This is how nested menus are built without losing the main search result list.
+    //
+    // Step by step:
+    // 1. turn each child sub-item into a real AppItem that includes the combined action
+    // 2. save the current main list as the previous view so we can go back later
+    // 3. replace the current list with the submenu
+    // 4. clear the search box because we are now browsing the child items, not the parent list
+    // 5. recalculate rankings for the new submenu and show a message that tells the user how to go back
     fn open_sub_items_for_parent(&mut self, parent: AppItem) -> bool {
         let mut sub_items = Vec::with_capacity(parent.sub_items.len());
         for sub in &parent.sub_items {
@@ -879,6 +988,10 @@ impl AppState {
         true
     }
 
+    // This is the reverse of the submenu open step.
+    //
+    // We pop the old view off the stack, restore its items and search text, and then re-rank the list.
+    // This is how the app goes back to the parent menu without losing the original selection or query.
     fn close_sub_items_view(&mut self) -> bool {
         let Some(previous) = self.view_stack.pop() else {
             return false;
@@ -894,6 +1007,10 @@ impl AppState {
         true
     }
 
+    // This is the glue that turns a parent action plus a child option into one new action.
+    //
+    // The child often means: "add this flag" or "ask for more input". The parent action gives the
+    // base command, and the child modifies it. This function makes that combined result into a new item.
     fn build_sub_item_from_parent(&self, parent: &AppItem, sub: &ActionSubItem) -> Option<AppItem> {
         let action = self.apply_sub_item_action(&parent.action, sub)?;
         let flags = if sub.flags.is_empty() {
@@ -933,6 +1050,15 @@ impl AppState {
         })
     }
 
+    // This is the part that turns a menu child into the final command behavior.
+    //
+    // Example:
+    // - base action: "echo hello"
+    // - sub item: flags = ["--help"]
+    // - result: "echo hello --help"
+    //
+    // If the sub-item also has an input prompt, like "Enter a package name", then the
+    // app creates a special "with flag" action that asks the user for the missing text.
     fn apply_sub_item_action(&self, base: &ItemAction, sub: &ActionSubItem) -> Option<ItemAction> {
         let flag_suffix = if sub.flags.is_empty() {
             String::new()
@@ -1005,6 +1131,14 @@ mod tests {
         ActionSubItem, AppItem, InfoField, ItemAction, ItemInfo, ProviderItem, SubItemInput,
     };
 
+    // These helper functions are not the app logic itself.
+    // They are test-building tools that create small fake items with the same structure
+    // that the real provider data uses.
+    //
+    // The purpose is simple: each test wants a tiny, predictable item so it can check
+    // one behavior without depending on real files, real shell commands, or a real provider.
+    //
+    // In other words: the helpers make the tests easy to read and easy to repeat.
     fn test_item(title: &str, command: &str) -> AppItem {
         let provider_item = ProviderItem {
             id: title.to_lowercase(),
@@ -1025,6 +1159,11 @@ mod tests {
         AppItem::from_provider_item("test", provider_item).expect("valid test item")
     }
 
+    // This helper is almost the same as the one above, but it adds a provider name.
+    //
+    // Some tests need to check behavior that is specific to one provider, like the
+    // installer provider. By tagging the item with a provider name, we can simulate
+    // real app data without loading any real provider files.
     fn test_item_with_provider(provider: &str, title: &str, command: &str) -> AppItem {
         let provider_item = ProviderItem {
             id: title.to_lowercase(),
@@ -1045,6 +1184,14 @@ mod tests {
         AppItem::from_provider_item(provider, provider_item).expect("valid test item")
     }
 
+    // This test checks the special installer mode.
+    //
+    // The app keeps the installer results hidden until the user types a real package query.
+    // That is why the ranked list starts empty even though the app was given items.
+    //
+    // The test proves two things:
+    // 1. the results are hidden before the user types anything
+    // 2. once the user types a letter like "f", the filter is ready to show matches
     #[test]
     fn installer_provider_hides_results_until_query_is_typed() {
         let mut app = AppState::new(
@@ -1062,6 +1209,12 @@ mod tests {
         assert!(!app.ranked.is_empty());
     }
 
+    // This test checks a very common user behavior:
+    // the user is looking at a list, then types a letter that should move the best match
+    // to the top of the ranked list.
+    //
+    // We force the selection to a lower slot first, then type a key. If the app is working,
+    // the new ranking will snap the selection back to the most relevant result.
     #[test]
     fn typing_snaps_selection_to_top() {
         let mut app = AppState::new(
@@ -1080,6 +1233,10 @@ mod tests {
         assert!(!app.ranked.is_empty());
     }
 
+    // This test checks that typing a letter into an empty query adds that letter to the input,
+    // instead of treating the key as a quit command or doing something else.
+    //
+    // It makes sure the app behaves like a normal text field when the user is searching.
     #[test]
     fn q_is_inserted_in_an_empty_query() {
         let mut app = AppState::new(vec![test_item("Notes", "echo notes")], 0);
@@ -1090,6 +1247,10 @@ mod tests {
         assert!(!app.should_quit);
     }
 
+    // This test covers a parent item that requires a child value before it can finish.
+    //
+    // The app should not launch the command immediately. Instead, it should open the special
+    // "flag input" mode because there is exactly one required sub-item and it expects user text.
     #[test]
     fn enter_on_required_parent_opens_input_for_single_sub_item() {
         let provider_item = ProviderItem {
@@ -1125,6 +1286,12 @@ mod tests {
         assert_eq!(app.input_title(), " Flag Input ");
     }
 
+    // This test checks the same idea as the one above, but this time the user presses Space
+    // instead of Enter.
+    //
+    // In a required single-step flow, the app should still skip the submenu and jump straight
+    // into the prompt, because there is no real choice to make. The user only needs to provide
+    // the missing input value.
     #[test]
     fn space_on_required_parent_skips_single_sub_item_menu() {
         let provider_item = ProviderItem {
@@ -1161,6 +1328,11 @@ mod tests {
         assert!(app.view_stack.is_empty());
     }
 
+    // This test proves that nested required single-choice steps are also skipped.
+    //
+    // The parent item has a required sub-item, and that sub-item itself has a required child.
+    // Even though there are multiple layers, the user should not be forced to click through a
+    // menu for the only available option. The app should still jump straight to the prompt.
     #[test]
     fn space_skips_nested_required_single_sub_item_menus() {
         let provider_item = ProviderItem {
@@ -1206,6 +1378,11 @@ mod tests {
         assert!(app.view_stack.is_empty());
     }
 
+    // This is the most layered version of the same behavior.
+    //
+    // A command starts in compose mode. The user types one value, then presses Enter.
+    // The app must recognize that the nested required single-choice chain should still be skipped,
+    // and it should stay in the input prompt without opening a submenu for the intermediate layer.
     #[test]
     fn enter_after_compose_input_skips_nested_required_single_sub_item_menu() {
         let provider_item = ProviderItem {
