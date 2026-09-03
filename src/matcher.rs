@@ -15,26 +15,25 @@ pub fn rank_items(query: &str, items: &[AppItem]) -> Vec<RankedItem> {
             .collect();
     }
 
-    let mut ranked = Vec::new();
+    let query_lower = query.to_lowercase();
+    let qchars: Vec<char> = query_lower.chars().collect();
+    let mut ranked = Vec::with_capacity(items.len());
     for (index, item) in items.iter().enumerate() {
-        if let Some(score) = score_item(query, item) {
+        if let Some(score) = score_item(query, &query_lower, &qchars, item) {
             ranked.push(RankedItem { index, score });
         }
     }
 
-    ranked.sort_by(|a, b| {
-        b.score
-            .cmp(&a.score)
-            .then_with(|| a.index.cmp(&b.index))
-    });
+    ranked.sort_by(|a, b| b.score.cmp(&a.score).then_with(|| a.index.cmp(&b.index)));
 
     ranked
 }
 
-fn score_item(query: &str, item: &AppItem) -> Option<i64> {
-    let title_score = score_candidate(query, &item.title).map(|score| score + 600);
-    let subtitle_score = score_candidate(query, &item.subtitle);
-    let id_score = score_candidate(query, &item.id).map(|score| score - 120);
+fn score_item(query: &str, query_lower: &str, qchars: &[char], item: &AppItem) -> Option<i64> {
+    let title_score =
+        score_candidate(query, query_lower, qchars, &item.title).map(|score| score + 600);
+    let subtitle_score = score_candidate(query, query_lower, qchars, &item.subtitle);
+    let id_score = score_candidate(query, query_lower, qchars, &item.id).map(|score| score - 120);
 
     [title_score, subtitle_score, id_score]
         .into_iter()
@@ -42,31 +41,33 @@ fn score_item(query: &str, item: &AppItem) -> Option<i64> {
         .max()
 }
 
-fn score_candidate(query: &str, candidate: &str) -> Option<i64> {
-    let query_lower = query.to_lowercase();
+fn score_candidate(
+    query: &str,
+    query_lower: &str,
+    qchars: &[char],
+    candidate: &str,
+) -> Option<i64> {
     let candidate_lower = candidate.to_lowercase();
 
     if query_lower == candidate_lower {
         return Some(10_000 - candidate.len() as i64);
     }
 
-    if candidate_lower.starts_with(&query_lower) {
+    if candidate_lower.starts_with(query_lower) {
         return Some(7_500 - candidate.len() as i64 + (query.len() as i64 * 20));
     }
-
-    let qchars: Vec<char> = query_lower.chars().collect();
-    let cchars: Vec<char> = candidate_lower.chars().collect();
 
     let mut score: i64 = 0;
     let mut qidx = 0usize;
     let mut last_match: Option<usize> = None;
+    let mut previous_char = None;
 
-    for (idx, c) in cchars.iter().enumerate() {
+    for (idx, c) in candidate_lower.chars().enumerate() {
         if qidx >= qchars.len() {
             break;
         }
 
-        if *c == qchars[qidx] {
+        if c == qchars[qidx] {
             score += 100;
 
             if idx == 0 {
@@ -79,16 +80,17 @@ fn score_candidate(query: &str, candidate: &str) -> Option<i64> {
                 score += 50;
             }
 
-            if idx > 0 {
-                let prev_char = cchars[idx - 1];
-                if matches!(prev_char, ' ' | '_' | '-' | '/' | '.') {
-                    score += 40;
-                }
+            if let Some(prev_char) = previous_char
+                && matches!(prev_char, ' ' | '_' | '-' | '/' | '.')
+            {
+                score += 40;
             }
 
             last_match = Some(idx);
             qidx += 1;
         }
+
+        previous_char = Some(c);
     }
 
     if qidx != qchars.len() {

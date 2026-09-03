@@ -1,5 +1,5 @@
 {
-  "name": "pkg-manager",
+  "name": "installer",
   "short_flag": "i",
   "command": "./target/debug/pkg_manager_provider"
 }

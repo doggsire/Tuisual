@@ -48,7 +48,7 @@ struct DesktopEntry {
 fn main() {
     if env::var_os("TUISUAL_PROVIDER_MODE").is_none() {
         eprintln!(
-            "This is a Tuisual provider helper. Run the app via 'tuisual -a' or 'cargo run --bin tuisual -- -a'."
+            "This is a Tuisual provider helper. Run the app via 'tuisual -l' or 'cargo run --bin tuisual -- -l'."
         );
         std::process::exit(2);
     }

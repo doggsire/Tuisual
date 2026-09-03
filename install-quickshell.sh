@@ -42,12 +42,12 @@ cat > "$WRAPPER_TMP" <<EOF
 #!/usr/bin/env bash
 for arg in "\$@"; do
   if [[ "\$arg" == "-h" || "\$arg" == "--help" ]]; then
-    echo "tuisual-qs: launch the QuickShell frontend for Tuisual."
+    echo "quisual: launch the QuickShell frontend for Tuisual."
     echo
     echo "Usage:"
-    echo "  tuisual-qs                Show provider catalog"
-    echo "  tuisual-qs [flags]        Load items from matching providers (forwarded to 'tuisual --json')"
-    echo "  tuisual-qs -h, --help     Show this help page"
+    echo "  quisual                Show provider catalog"
+    echo "  quisual [flags]        Load items from matching providers (forwarded to 'tuisual --json')"
+    echo "  quisual -h, --help     Show this help page"
     echo
     exec tuisual -h
   fi
@@ -55,9 +55,9 @@ done
 export TUISUAL_QS_ARGS="\$*"
 exec qs -p "$CONFIG_DIR"
 EOF
-"${SUDO_CMD[@]}" install -m 755 "$WRAPPER_TMP" "$BIN_DIR/tuisual-qs"
+"${SUDO_CMD[@]}" install -m 755 "$WRAPPER_TMP" "$BIN_DIR/quisual"
 rm -f "$WRAPPER_TMP"
 
 echo "Installed QuickShell launcher into: $CONFIG_DIR"
-echo "Installed launcher into: $BIN_DIR/tuisual-qs"
-echo "Launch it with: tuisual-qs"
+echo "Installed launcher into: $BIN_DIR/quisual"
+echo "Launch it with: quisual"

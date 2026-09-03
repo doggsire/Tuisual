@@ -43,7 +43,7 @@ For a QuickShell popup on Wayland, install the optional frontend and run it with
 
 ```
 ./install-quickshell.sh
-tuisual-qs
+quisual
 ```
 
 ## Learn more

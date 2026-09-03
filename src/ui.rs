@@ -250,7 +250,7 @@ fn render_results(frame: &mut Frame, area: Rect, app: &AppState) {
 
     let list_items: Vec<ListItem> = if app.ranked.is_empty() {
         let empty_message = if app.input.is_empty()
-            && app.items.iter().all(|item| item.provider == "pkg-manager")
+            && app.items.iter().all(|item| item.provider == "installer")
         {
             "Type to search packages"
         } else {
