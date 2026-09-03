@@ -10,8 +10,12 @@ use std::time::SystemTime;
 
 const PACMAN_REPO_CACHE_KEY: &str = "pacman_slq";
 const FLATPAK_REMOTE_CACHE_KEY: &str = "flatpak_remote_ls";
+const PACMAN_INSTALLED_CACHE_KEY: &str = "pacman_qq";
+const AUR_INSTALLED_CACHE_KEY: &str = "pacman_qmq";
+const FLATPAK_INSTALLED_CACHE_KEY: &str = "flatpak_installed";
 const PACMAN_REPO_CACHE_TTL_SECS: u64 = 300;
 const FLATPAK_REMOTE_CACHE_TTL_SECS: u64 = 300;
+const INSTALLED_CACHE_TTL_SECS: u64 = 30;
 
 #[derive(Debug, Serialize, Clone)]
 struct InfoField {
@@ -256,7 +260,12 @@ fn run_lines(cmd: &str, args: &[&str]) -> Vec<String> {
 
 fn installed_pacman_names(aur_names: &[String]) -> HashSet<String> {
     let mut names = HashSet::new();
-    for item in run_lines("pacman", &["-Qq"]) {
+    for item in run_lines_cached(
+        "pacman",
+        &["-Qq"],
+        PACMAN_INSTALLED_CACHE_KEY,
+        read_ttl_env("TUISUAL_PACMAN_INSTALLED_CACHE_TTL_SECS", INSTALLED_CACHE_TTL_SECS),
+    ) {
         names.insert(item);
     }
     for item in aur_names {
@@ -266,7 +275,12 @@ fn installed_pacman_names(aur_names: &[String]) -> HashSet<String> {
 }
 
 fn installed_aur_names() -> Vec<String> {
-    let mut names = run_lines("pacman", &["-Qmq"]);
+    let mut names = run_lines_cached(
+        "pacman",
+        &["-Qmq"],
+        AUR_INSTALLED_CACHE_KEY,
+        read_ttl_env("TUISUAL_AUR_INSTALLED_CACHE_TTL_SECS", INSTALLED_CACHE_TTL_SECS),
+    );
     names.sort();
     names.dedup();
     names
@@ -274,7 +288,12 @@ fn installed_aur_names() -> Vec<String> {
 
 fn installed_flatpak_ids() -> HashSet<String> {
     let mut ids = HashSet::new();
-    for item in run_lines("flatpak", &["list", "--app", "--columns=application"]) {
+    for item in run_lines_cached(
+        "flatpak",
+        &["list", "--app", "--columns=application"],
+        FLATPAK_INSTALLED_CACHE_KEY,
+        read_ttl_env("TUISUAL_FLATPAK_INSTALLED_CACHE_TTL_SECS", INSTALLED_CACHE_TTL_SECS),
+    ) {
         ids.insert(item);
     }
     ids
@@ -537,7 +556,7 @@ fn build_available_items() -> Vec<ProviderItem> {
         })
         .collect();
 
-    items.sort_by_key(|a| a.title.to_ascii_lowercase());
+    items.sort_by_cached_key(|a| a.title.to_ascii_lowercase());
 
     let install_aur = ProviderItem {
         id: "pkg-aur-install".to_string(),
@@ -575,7 +594,7 @@ fn build_available_items() -> Vec<ProviderItem> {
 fn main() {
     if env::var_os("TUISUAL_PROVIDER_MODE").is_none() {
         eprintln!(
-            "This is a Tuisual provider helper. Run the app via 'tuisual --pkg-manager' or 'cargo run --bin tuisual -- --pkg-manager'."
+            "This is a Tuisual provider helper. Run the app via 'tuisual --installer' or 'cargo run --bin tuisual -- --installer'."
         );
         std::process::exit(2);
     }

@@ -65,21 +65,21 @@ pub struct AppState {
     compose_state: Option<ComposeState>,
     view_stack: Vec<ViewState>,
     last_click: Option<LastClickState>,
-    pending_pkg_lookup: Option<PendingPkgLookup>,
-    last_pkg_lookup_query: Option<String>,
+    pending_installer_lookup: Option<PendingPkgLookup>,
+    last_installer_lookup_query: Option<String>,
 }
 
 impl AppState {
     pub fn new(items: Vec<AppItem>, rejected_items: usize) -> Self {
-        let is_pkg_manager_only = !items.is_empty() && items.iter().all(|item| item.provider == "pkg-manager");
-        let ranked = if is_pkg_manager_only {
+        let is_installer_only = !items.is_empty() && items.iter().all(|item| item.provider == "installer");
+        let ranked = if is_installer_only {
             Vec::new()
         } else {
             rank_items("", &items)
         };
         let status = if items.is_empty() {
             "No items loaded".to_string()
-        } else if is_pkg_manager_only {
+        } else if is_installer_only {
             "Type a package name to search".to_string()
         } else {
             format!("Ready: {} items", items.len())
@@ -100,8 +100,8 @@ impl AppState {
             compose_state: None,
             view_stack: Vec::new(),
             last_click: None,
-            pending_pkg_lookup: None,
-            last_pkg_lookup_query: None,
+            pending_installer_lookup: None,
+            last_installer_lookup_query: None,
         }
     }
 
@@ -123,7 +123,6 @@ impl AppState {
                     self.should_quit = true;
                 }
             }
-            KeyCode::Char('q') if self.input.is_empty() => self.should_quit = true,
             KeyCode::Char(' ') if !key.modifiers.contains(KeyModifiers::CONTROL) => {
                 if self.try_start_compose_mode() {
                     return;
@@ -188,7 +187,7 @@ impl AppState {
                 }
             }
             KeyCode::Enter => {
-                if self.try_force_pkg_lookup() {
+                if self.try_force_installer_lookup() {
                     return;
                 }
                 self.launch_selected();
@@ -245,7 +244,7 @@ impl AppState {
     }
 
     pub fn poll_action_results(&mut self) {
-        self.process_debounced_pkg_lookup();
+        self.process_debounced_installer_lookup();
     }
 
     pub fn take_pending_shell_command(&mut self) -> Option<PendingShellCommand> {
@@ -459,12 +458,12 @@ impl AppState {
     }
 
     fn recompute_rankings(&mut self) {
-        if self.input.is_empty() && self.is_pkg_manager_only() {
+        if self.input.is_empty() && self.is_installer_only() {
             self.ranked.clear();
             self.selected = 0;
             self.info_scroll = 0;
             self.last_click = None;
-            self.pending_pkg_lookup = None;
+            self.pending_installer_lookup = None;
             self.status = "Type a package name to search".to_string();
             return;
         }
@@ -480,14 +479,14 @@ impl AppState {
             self.status = format!("{} matches", self.ranked.len());
         }
 
-        self.schedule_pkg_lookup();
+        self.schedule_installer_lookup();
     }
 
-    fn is_pkg_manager_only(&self) -> bool {
-        !self.items.is_empty() && self.items.iter().all(|item| item.provider == "pkg-manager")
+    fn is_installer_only(&self) -> bool {
+        !self.items.is_empty() && self.items.iter().all(|item| item.provider == "installer")
     }
 
-    fn pkg_lookup_debounce(query: &str) -> Duration {
+    fn installer_lookup_debounce(query: &str) -> Duration {
         if query.chars().count() <= 3 {
             Duration::from_millis(180)
         } else {
@@ -495,31 +494,31 @@ impl AppState {
         }
     }
 
-    fn schedule_pkg_lookup(&mut self) {
-        if !self.is_pkg_manager_only() {
-            self.pending_pkg_lookup = None;
+    fn schedule_installer_lookup(&mut self) {
+        if !self.is_installer_only() {
+            self.pending_installer_lookup = None;
             return;
         }
 
         let query = self.input.trim();
         if query.chars().count() < 2 {
-            self.pending_pkg_lookup = None;
+            self.pending_installer_lookup = None;
             return;
         }
 
-        if self.last_pkg_lookup_query.as_deref() == Some(query) {
+        if self.last_installer_lookup_query.as_deref() == Some(query) {
             return;
         }
 
-        self.pending_pkg_lookup = Some(PendingPkgLookup {
+        self.pending_installer_lookup = Some(PendingPkgLookup {
             query: query.to_string(),
-            due_at: Instant::now() + Self::pkg_lookup_debounce(query),
+            due_at: Instant::now() + Self::installer_lookup_debounce(query),
         });
     }
 
-    fn process_debounced_pkg_lookup(&mut self) {
+    fn process_debounced_installer_lookup(&mut self) {
         let should_run = self
-            .pending_pkg_lookup
+            .pending_installer_lookup
             .as_ref()
             .is_some_and(|pending| Instant::now() >= pending.due_at);
 
@@ -527,7 +526,7 @@ impl AppState {
             return;
         }
 
-        let Some(pending) = self.pending_pkg_lookup.take() else {
+        let Some(pending) = self.pending_installer_lookup.take() else {
             return;
         };
 
@@ -535,15 +534,15 @@ impl AppState {
             return;
         }
 
-        if self.last_pkg_lookup_query.as_deref() == Some(pending.query.as_str()) {
+        if self.last_installer_lookup_query.as_deref() == Some(pending.query.as_str()) {
             return;
         }
 
-        self.lookup_pkg_manager_query(&pending.query);
+        self.lookup_installer_query(&pending.query);
     }
 
-    fn try_force_pkg_lookup(&mut self) -> bool {
-        if !self.is_pkg_manager_only() {
+    fn try_force_installer_lookup(&mut self) -> bool {
+        if !self.is_installer_only() {
             return false;
         }
 
@@ -552,17 +551,17 @@ impl AppState {
             return false;
         }
 
-        if self.last_pkg_lookup_query.as_deref() == Some(query.as_str()) {
+        if self.last_installer_lookup_query.as_deref() == Some(query.as_str()) {
             return false;
         }
 
-        self.pending_pkg_lookup = None;
-        self.lookup_pkg_manager_query(&query);
+        self.pending_installer_lookup = None;
+        self.lookup_installer_query(&query);
         true
     }
 
-    fn lookup_pkg_manager_query(&mut self, query: &str) {
-        let args = vec!["--pkg-manager".to_string()];
+    fn lookup_installer_query(&mut self, query: &str) {
+        let args = vec!["--installer".to_string()];
         let previous = env::var_os("TUISUAL_PROVIDER_QUERY");
 
         unsafe {
@@ -582,7 +581,7 @@ impl AppState {
 
         self.items = load_report.items;
         self.rejected_items = load_report.rejected.len();
-        self.last_pkg_lookup_query = Some(query.to_string());
+        self.last_installer_lookup_query = Some(query.to_string());
         self.recompute_rankings();
     }
 
@@ -813,8 +812,8 @@ impl AppState {
 
         self.items = load_report.items;
         self.rejected_items = load_report.rejected.len();
-        self.pending_pkg_lookup = None;
-        self.last_pkg_lookup_query = None;
+        self.pending_installer_lookup = None;
+        self.last_installer_lookup_query = None;
         self.recompute_rankings();
 
         if self.items.is_empty() {
@@ -1047,11 +1046,11 @@ mod tests {
     }
 
     #[test]
-    fn pkg_manager_provider_hides_results_until_query_is_typed() {
+    fn installer_provider_hides_results_until_query_is_typed() {
         let mut app = AppState::new(
             vec![
-                test_item_with_provider("pkg-manager", "firefox", "echo firefox"),
-                test_item_with_provider("pkg-manager", "vlc", "echo vlc"),
+                test_item_with_provider("installer", "firefox", "echo firefox"),
+                test_item_with_provider("installer", "vlc", "echo vlc"),
             ],
             0,
         );
@@ -1079,6 +1078,16 @@ mod tests {
 
         assert_eq!(app.selected, 0);
         assert!(!app.ranked.is_empty());
+    }
+
+    #[test]
+    fn q_is_inserted_in_an_empty_query() {
+        let mut app = AppState::new(vec![test_item("Notes", "echo notes")], 0);
+
+        app.handle_key(crossterm::event::KeyEvent::from(crossterm::event::KeyCode::Char('q')));
+
+        assert_eq!(app.input, "q");
+        assert!(!app.should_quit);
     }
 
     #[test]
