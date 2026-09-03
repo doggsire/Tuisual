@@ -604,12 +604,6 @@ ShellRoot {
                                     font.family: Theme.fontFamily
                                     font.pixelSize: Theme.fontSize
                                     enabled: !root.composeItem
-                                    onClicked: {
-                                        if (root.composeItem)
-                                            return
-                                        root.currentIndex = index
-                                        root.launch(modelData)
-                                    }
                                     contentItem: Column {
                                         spacing: 1
                                         Text { text: modelData.title; font: parent.parent.font; color: Theme.colorTextPrimary; elide: Text.ElideRight; width: parent.width }
@@ -618,6 +612,20 @@ ShellRoot {
                                     background: Rectangle {
                                         radius: Theme.cornerRadius
                                         color: parent.highlighted ? Theme.colorHighlight : "transparent"
+                                    }
+                                    MouseArea {
+                                        anchors.fill: parent
+                                        onClicked: {
+                                            if (root.composeItem)
+                                                return
+                                            root.currentIndex = index
+                                        }
+                                        onDoubleClicked: {
+                                            if (root.composeItem)
+                                                return
+                                            root.currentIndex = index
+                                            root.launch(modelData)
+                                        }
                                     }
                                 }
                                 ScrollBar.vertical: ScrollBar { }

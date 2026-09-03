@@ -61,22 +61,25 @@ pub fn discover_path_sub_items(command_name: &str) -> Vec<ActionSubItem> {
         seen_flags.extend(item.flags.iter().cloned());
     }
 
+    sub_items.insert(
+        1,
+        ActionSubItem {
+            id: "custom-flags".to_string(),
+            title: "Custom Flags / Args".to_string(),
+            subtitle: "Type any flags or arguments to append".to_string(),
+            flags: vec![],
+            exit_after: Some(true),
+            input: Some(SubItemInput {
+                flag_prefix: "".to_string(),
+                prompt: "Enter flags/args".to_string(),
+            }),
+            require_sub_item: false,
+            sub_items: vec![],
+        },
+    );
+
     append_auto_flags(&mut sub_items, &mut seen_flags, discovered);
     append_catalog_flags(&mut sub_items, &mut seen_flags, catalog);
-
-    sub_items.push(ActionSubItem {
-        id: "custom-flags".to_string(),
-        title: "Custom Flags / Args".to_string(),
-        subtitle: "Type any flags or arguments to append".to_string(),
-        flags: vec![],
-        exit_after: Some(true),
-        input: Some(SubItemInput {
-            flag_prefix: "".to_string(),
-            prompt: "Enter flags/args".to_string(),
-        }),
-        require_sub_item: false,
-        sub_items: vec![],
-    });
 
     sub_items
 }

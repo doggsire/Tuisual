@@ -67,6 +67,24 @@
         "type": "shell_command_exit",
         "value": "hyprshutdown"
       }
+    },
+    {
+      "id": "arch-updates",
+      "title": "Arch Updates",
+      "subtitle": "Open the Arch and Flatpak updates provider",
+      "info": {
+        "summary": "Open the provider for Arch package and Flatpak update actions.",
+        "fields": [
+          {
+            "label": "Provider",
+            "value": "arch-updates"
+          }
+        ]
+      },
+      "action": {
+        "type": "provider_hint",
+        "value": "arch-updates"
+      }
     }
   ]
 }
