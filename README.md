@@ -52,6 +52,8 @@ frontend (QuickShell's `qs` command is required) and run it with:
 
 ```
 curl -fsSL https://raw.githubusercontent.com/doggsire/Tuisual/main/install-quickshell.sh | bash
+```
+```
 quisual
 ```
 
