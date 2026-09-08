@@ -27,6 +27,14 @@ desktop, running directly in a terminal window.
 
 ## Getting started
 
+If you want to install directly from GitHub without cloning the repo first:
+
+```
+curl -fsSL https://raw.githubusercontent.com/doggsire/Tuisual/main/install.sh | bash
+```
+
+Or, if you prefer the local checkout flow:
+
 ```
 git clone <this repo>
 cd Tuisual
@@ -41,6 +49,13 @@ tuisual
 
 For Tuisual's QuickShell frontend, launched as `quisual` on Wayland, install the optional
 frontend (QuickShell's `qs` command is required) and run it with:
+
+```
+curl -fsSL https://raw.githubusercontent.com/doggsire/Tuisual/main/install-quickshell.sh | bash
+quisual
+```
+
+You can also run the script locally after cloning:
 
 ```
 ./install-quickshell.sh
