@@ -13,6 +13,9 @@ ShellRoot {
     property int currentIndex: 0
     property string query: ""
     property string status: "Loading providers..."
+    property bool installerActive: false
+    property string pendingInstallerQuery: ""
+    property var installerProviderArgs: ["--installer"]
     property bool closeAfterAction: false
     property bool infoFocused: false
     property bool terminalLaunchPending: false
@@ -114,9 +117,11 @@ ShellRoot {
             : "Tab: focus pane | Up/Down: active pane | PgUp/PgDn: info | Enter: launch | Esc: quit"
     }
 
-    function receiveCatalog(text) {
+    function receiveCatalog(text, responseQuery) {
         try {
             const payload = JSON.parse(text)
+            if (responseQuery !== undefined && responseQuery !== query.trim())
+                return
             items = payload.items.map(item => {
                 item._titleLower = item.title.toLowerCase()
                 item._subtitleLower = item.subtitle.toLowerCase()
@@ -139,6 +144,15 @@ ShellRoot {
     function loadProvider(name, packageQuery) {
         query = ""
         composeItem = null
+        installerActive = name === "installer"
+        pendingInstallerQuery = ""
+        installerProviderArgs = installerActive ? [`--${name}`] : []
+        catalogProcess.installerQuery = ""
+        if (installerActive && (!packageQuery || packageQuery.trim().length < 2)) {
+            items = []
+            status = "Type at least two characters to search packages"
+            return
+        }
         const command = ["tuisual", "--json"]
         if (packageQuery && packageQuery.length > 0)
             command.push("--query", packageQuery)
@@ -148,12 +162,41 @@ ShellRoot {
         catalogProcess.exec(command)
     }
 
+    function searchInstallerPackages() {
+        const searchQuery = pendingInstallerQuery
+        if (searchQuery.length < 2 || searchQuery !== query.trim())
+            return
+        if (catalogProcess.running) {
+            packageSearchTimer.restart()
+            return
+        }
+        status = "Searching..."
+        catalogProcess.installerQuery = searchQuery
+        catalogProcess.exec(["tuisual", "--json", "--query", searchQuery].concat(installerProviderArgs))
+    }
+
+    function containsInstallerFlag(args) {
+        return args.some(arg => arg === "--installer"
+            || (arg.startsWith("-") && !arg.startsWith("--") && arg.includes("i")))
+    }
+
     // Forwards any CLI flags passed to the `quisual` wrapper (e.g. -P) straight to `tuisual --json`.
     function loadInitial() {
         query = ""
         composeItem = null
+        installerActive = false
+        pendingInstallerQuery = ""
+        installerProviderArgs = ["--installer"]
+        catalogProcess.installerQuery = ""
         const raw = Quickshell.env("TUISUAL_QS_ARGS")
         const extraArgs = raw ? raw.split(/\s+/).filter(arg => arg.length > 0) : []
+        if (containsInstallerFlag(extraArgs)) {
+            installerActive = true
+            installerProviderArgs = extraArgs
+            items = []
+            status = "Type at least two characters to search packages"
+            return
+        }
         status = "Loading..."
         catalogProcess.exec(["tuisual", "--json"].concat(extraArgs))
     }
@@ -377,13 +420,25 @@ ShellRoot {
 
     Process {
         id: catalogProcess
+        property string installerQuery: ""
         stdout: StdioCollector {
-            onStreamFinished: root.receiveCatalog(text)
+            onStreamFinished: root.receiveCatalog(text, catalogProcess.installerQuery)
         }
         onExited: (exitCode, exitStatus) => {
             if (exitCode !== 0)
                 root.status = `Provider command failed (${exitCode})`
+            if (root.installerActive
+                && root.query.trim().length >= 2
+                && root.query.trim() !== catalogProcess.installerQuery)
+                packageSearchTimer.restart()
         }
+    }
+
+    Timer {
+        id: packageSearchTimer
+        interval: 120
+        repeat: false
+        onTriggered: root.searchInstallerPackages()
     }
 
     Process {
@@ -497,6 +552,17 @@ ShellRoot {
                         onTextEdited: {
                             root.query = text
                             root.currentIndex = 0
+                            if (root.installerActive && !root.composeItem) {
+                                const trimmed = text.trim()
+                                root.pendingInstallerQuery = trimmed
+                                if (trimmed.length >= 2)
+                                    packageSearchTimer.restart()
+                                else {
+                                    packageSearchTimer.stop()
+                                    root.items = []
+                                    root.status = "Type at least two characters to search packages"
+                                }
+                            }
                         }
                         Keys.priority: Keys.BeforeItem
                         Keys.onPressed: event => {

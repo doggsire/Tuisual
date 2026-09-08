@@ -25,7 +25,7 @@ const AUR_INSTALLED_CACHE_KEY: &str = "pacman_qmq";
 const FLATPAK_INSTALLED_CACHE_KEY: &str = "flatpak_installed";
 const PACMAN_REPO_CACHE_TTL_SECS: u64 = 300;
 const FLATPAK_REMOTE_CACHE_TTL_SECS: u64 = 300;
-const INSTALLED_CACHE_TTL_SECS: u64 = 30;
+const INSTALLED_CACHE_TTL_SECS: u64 = 300;
 
 #[derive(Debug, Serialize, Clone)]
 struct InfoField {
@@ -282,6 +282,16 @@ fn run_lines_cached(cmd: &str, args: &[&str], cache_key: &str, ttl_secs: u64) ->
     lines
 }
 
+fn run_catalog_lines(cmd: &str, args: &[&str], cache_key: &str, ttl_secs: u64, query: Option<&str>) -> Vec<String> {
+    if query.is_some() {
+        if let Some(lines) = read_cached_lines(cache_key, u64::MAX) {
+            return lines;
+        }
+    }
+
+    run_lines_cached(cmd, args, cache_key, ttl_secs)
+}
+
 // Run a command and capture standard output as lines.
 // This is the basic building block for reading package data from pacman, flatpak, etc.
 //
@@ -384,11 +394,12 @@ fn installed_flatpak_ids() -> HashSet<String> {
 // is installed, and prepares the install/uninstall commands for the menu item.
 fn pacman_repo_items(installed: &HashSet<String>, query: Option<&str>) -> Vec<AvailableItem> {
     let mut result = Vec::new();
-    let mut names = run_lines_cached(
+    let mut names = run_catalog_lines(
         "pacman",
         &["-Slq"],
         PACMAN_REPO_CACHE_KEY,
         read_ttl_env("TUISUAL_PACMAN_REPO_CACHE_TTL_SECS", PACMAN_REPO_CACHE_TTL_SECS),
+        query,
     );
     // Sort and deduplicate raw command output before building menu records.
     names.sort();
@@ -451,7 +462,7 @@ fn aur_installed_items(aur_names: &[String], query: Option<&str>) -> Vec<Availab
 fn flatpak_items(installed: &HashSet<String>, query: Option<&str>) -> Vec<AvailableItem> {
     let mut result = Vec::new();
     let mut seen = HashSet::new();
-    let lines = run_lines_cached(
+    let lines = run_catalog_lines(
         "flatpak",
         &["remote-ls", "--app", "--columns=application,name"],
         FLATPAK_REMOTE_CACHE_KEY,
@@ -459,6 +470,7 @@ fn flatpak_items(installed: &HashSet<String>, query: Option<&str>) -> Vec<Availa
             "TUISUAL_FLATPAK_REMOTE_CACHE_TTL_SECS",
             FLATPAK_REMOTE_CACHE_TTL_SECS,
         ),
+        query,
     );
 
     for line in lines {

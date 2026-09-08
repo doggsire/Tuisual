@@ -314,7 +314,29 @@ fn ensure_provider_binary_exists(command: &str) -> Result<String, String> {
 // This function handles the binary case by making sure the binary exists and then asking it for JSON.
 fn run_provider_binary_command(command: &str) -> Result<Vec<ProviderItem>, String> {
     let resolved = ensure_provider_binary_exists(command)?;
-    run_provider_shell_and_parse(&resolved, "command", "provider command")
+    let output = Command::new(&resolved)
+        .current_dir(env!("CARGO_MANIFEST_DIR"))
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .env("TUISUAL_PROVIDER_MODE", "1")
+        .output()
+        .map_err(|err| format!("failed to run provider command: {}", err))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!(
+            "exit status {:?}: {}",
+            output.status.code(),
+            stderr.trim()
+        ));
+    }
+
+    let stdout = String::from_utf8(output.stdout)
+        .map_err(|err| format!("provider command output was not utf-8: {}", err))?;
+
+    serde_json::from_str(&stdout)
+        .map_err(|err| format!("provider command output json parse error: {}", err))
 }
 
 // This handles the shell-command form of a provider.
